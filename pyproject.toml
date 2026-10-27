@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "transcribe-anywhere"
+version = "0.1.0"
+description = "Local meeting transcription (German first, English second) - runs fully offline."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.7",
+    "soundcard>=0.4.3",
+    "faster-whisper>=1.1",
+    "numpy>=1.26",
+    "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+# NVIDIA GPU support for CTranslate2 (Linux + Windows)
+cuda = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9,<10"]
+dev = ["pytest>=8", "pyflakes"]
+
+[project.gui-scripts]
+transcribe-anywhere = "transcribe_anywhere.__main__:main"
+
+[project.scripts]
+transcribe-anywhere-cli = "transcribe_anywhere.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/transcribe_anywhere"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
