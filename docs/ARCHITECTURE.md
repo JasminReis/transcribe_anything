@@ -10,7 +10,7 @@
 | Default model | `large-v3-turbo` | Near large-v3 quality for German at a fraction of the cost; on CPU as fast as `medium` and more accurate. `small` as fast fallback. |
 | Audio capture | `soundcard` | One API for mic + system audio: WASAPI loopback on Windows, PulseAudio/PipeWire monitor sources on Linux. |
 | Paths | `platformdirs` | `%LOCALAPPDATA%\TranscribeAnywhere` on Windows, `~/.local/share/TranscribeAnywhere` on Linux. |
-| Packaging | PyInstaller → Inno Setup (Windows), AppImage (Linux) | Later phase. |
+| Packaging | PyInstaller → Inno Setup (Windows), AppImage (Linux) | See [DISTRIBUTION.md](DISTRIBUTION.md). |
 
 ## Layers
 

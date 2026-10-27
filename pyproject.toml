@@ -20,6 +20,7 @@ dependencies = [
 # NVIDIA GPU support for CTranslate2 (Linux + Windows)
 cuda = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9,<10"]
 dev = ["pytest>=8", "pyflakes"]
+build = ["pyinstaller>=6.10"]
 
 [project.gui-scripts]
 transcribe-anywhere = "transcribe_anywhere.__main__:main"

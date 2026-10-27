@@ -7,6 +7,7 @@ a searchable library of sessions. Built for long meetings (1–2 h and more).
 - Product concept, start and feel: [docs/CONCEPT.md](docs/CONCEPT.md)
 - Technical design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Plan: [docs/ROADMAP.md](docs/ROADMAP.md)
+- Building a downloadable app: [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)
 
 ## Run it (Linux)
 

@@ -15,7 +15,9 @@
 - [ ] First-run wizard incl. model download progress
 - [ ] Search across all transcripts (SQLite FTS5)
 - [ ] DOCX export, copy to clipboard
-- [ ] Windows build (PyInstaller) + installer + autostart
+- [x] PyInstaller recipe, standalone bundle tested on Linux
+- [ ] Downloadable app: Setup.exe + AppImage built in the cloud, signed, update check
+      (details: [DISTRIBUTION.md](DISTRIBUTION.md))
 
 ## Phase 2 – Comfort
 - [ ] Global hotkey start/stop, pause
