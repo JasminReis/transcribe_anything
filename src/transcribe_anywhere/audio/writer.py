@@ -33,7 +33,7 @@ class SegmentedWavWriter:
 
     def write(self, samples: np.ndarray) -> None:
         """samples: 1-D float array in [-1, 1]. Ignored after close()."""
-        pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
+        pcm = np.rint(np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
         with self._lock:
             if self._closed:
                 return

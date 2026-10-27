@@ -37,6 +37,7 @@ class Session:
     started_at: str = ""
     ended_at: str = ""
     duration: float = 0.0
+    speech_seconds: float = 0.0       # speech found by the VAD (both tracks)
     status: str = "recording"
     language: str = "de"
     model: str = ""

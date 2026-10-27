@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from transcribe_anywhere.session.transcript import Segment
+from transcribe_anywhere.transcription.filters import is_hallucination
 
 log = logging.getLogger(__name__)
 
@@ -107,21 +108,23 @@ class Transcriber:
         offset: float = 0.0,
         speaker: str = "",
         should_cancel: Callable[[], bool] = lambda: False,
+        vad: bool = True,
     ) -> Iterator[Segment]:
+        """Yield segments. Pass vad=False for audio that already contains only speech."""
         if self._model is None:
             self.load()
         segments, _info = self._model.transcribe(
             str(audio) if isinstance(audio, Path) else audio,
             language=self.language,
             beam_size=5,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
+            vad_filter=vad,
+            vad_parameters={"min_silence_duration_ms": 1000, "speech_pad_ms": 400} if vad else None,
             condition_on_previous_text=False,   # avoids repetition loops in long audio
             hotwords=self.hotwords,
         )
         for seg in segments:
             if should_cancel():
                 raise Cancelled()
-            text = seg.text.strip()
-            if text:
-                yield Segment(round(offset + seg.start, 2), round(offset + seg.end, 2), text, speaker)
+            if is_hallucination(seg.text, seg.no_speech_prob, seg.avg_logprob):
+                continue
+            yield Segment(round(offset + seg.start, 2), round(offset + seg.end, 2), seg.text.strip(), speaker)

@@ -68,9 +68,20 @@ def _make_transcriber(args):
 def _cmd_transcribe(args) -> int:
     from transcribe_anywhere.session.export import fmt_time
 
+    from transcribe_anywhere.transcription.job import transcribe_chunk
+    from transcribe_anywhere.transcription.segmenter import SR, ArrayAudio, detect_speech, plan_chunks
+
     tr = _make_transcriber(args)
     t0 = time.time()
-    for seg in tr.transcribe(Path(args.file)):
+    audio = ArrayAudio.from_file(Path(args.file))
+    if args.no_vad:   # for comparison only: let Whisper see everything, silence included
+        segments = tr.transcribe(audio.samples, vad=False)
+    else:
+        regions = detect_speech(audio)
+        speech = sum(e - s for s, e in regions) / SR
+        print(f"Sprache: {speech:.0f} s von {audio.total_samples / SR:.0f} s", file=sys.stderr)
+        segments = (seg for chunk in plan_chunks(regions) for seg in transcribe_chunk(chunk, audio, tr))
+    for seg in segments:
         print(f"[{fmt_time(seg.start)}] {seg.text}", flush=True)
     print(f"({time.time() - t0:.1f}s)", file=sys.stderr)
     return 0
@@ -83,7 +94,11 @@ def _cmd_transcribe_session(args) -> int:
 
     session = Session.load(Path(args.folder))
     tr = _make_transcriber(args)
-    segments = transcribe_session(session, tr, lambda d, t: print(f"  {d}/{t}", file=sys.stderr))
+    def show(p):
+        print(f"\r  {p.stage:10s} {p.fraction * 100:5.1f} %", end="", file=sys.stderr)
+
+    segments = transcribe_session(session, tr, show)
+    print(file=sys.stderr)
     session.status, session.model = "done", f"{tr.model_name} ({tr.device})"
     session.save()
     print(to_txt(session, segments))
@@ -106,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("-m", "--model", default="")
         p.add_argument("-l", "--language", default="")
         p.add_argument("-d", "--device", default="")
+        if name == "transcribe":
+            p.add_argument("--no-vad", action="store_true", help="Stille nicht entfernen (nur zum Vergleich)")
     args = parser.parse_args(argv)
 
     commands = {"devices": _cmd_devices, "record": _cmd_record,
