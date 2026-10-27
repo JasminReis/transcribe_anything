@@ -13,7 +13,8 @@ from transcribe_anywhere.session.transcript import Segment
 
 log = logging.getLogger(__name__)
 
-MODELS = ["large-v3-turbo", "large-v3", "medium", "small"]
+# On CPU, "medium" was no faster than large-v3-turbo and less accurate, so it is not offered.
+MODELS = ["large-v3-turbo", "large-v3", "small"]
 DEFAULT_MODEL = "large-v3-turbo"
 
 

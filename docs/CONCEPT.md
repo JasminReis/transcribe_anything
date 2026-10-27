@@ -81,7 +81,7 @@ searchable transcript when the meeting ends — even for sessions of 2+ hours.
 ## Settings (v1)
 
 - Language: Deutsch (default) · Englisch · Automatisch
-- Model: Automatisch · large-v3-turbo · large-v3 · medium · small
+- Model: Automatisch · large-v3-turbo · large-v3 (nur GPU sinnvoll) · small (schnell)
 - Compute: Automatisch (GPU if available) · CPU · GPU
 - Microphone, system audio device (defaults follow the OS default devices)
 - Storage folder

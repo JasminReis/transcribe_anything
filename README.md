@@ -55,12 +55,14 @@ tests/                 headless tests of the core
 docs/                  concept, architecture, roadmap
 ```
 
-## First measurements (Linux dev machine, 6.5 min German speech)
+## First measurements (6.5 min German speech)
 
 | Setup | Time | vs. real time |
 |---|---|---|
 | RTX 5090, large-v3-turbo float16 | 5 s | ~75× faster |
 | CPU only (default 4 threads), large-v3-turbo int8 | 103 s | ~4× faster |
+| Simulated laptop (4 cores / 8 threads), large-v3-turbo int8 | 108 s | ~3.6× faster |
 
 Recognition quality on German was very good (punctuation, numbers, technical terms).
-Speed on the target Windows laptop still needs to be measured.
+The target laptop (Ryzen AI 5 330, no NVIDIA GPU) is expected to manage roughly 1.5–2.5× real time;
+details and conclusions in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#target-hardware).

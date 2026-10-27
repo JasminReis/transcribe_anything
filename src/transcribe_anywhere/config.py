@@ -26,7 +26,7 @@ def default_storage_dir() -> Path:
 @dataclass
 class Settings:
     language: str = "de"            # "de" | "en" | "auto"
-    model: str = "auto"             # "auto" | "large-v3-turbo" | "large-v3" | "medium" | "small"
+    model: str = "auto"             # "auto" | "large-v3-turbo" | "large-v3" | "small"
     compute_device: str = "auto"    # "auto" | "cpu" | "cuda"
     mic_device: str = ""            # "" = OS default microphone
     loopback_device: str = ""       # "" = system audio of the OS default speaker
