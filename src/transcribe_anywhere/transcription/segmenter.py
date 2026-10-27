@@ -31,16 +31,23 @@ MAX_CHUNK_SPEECH_S = 60
 class TrackAudio:
     """A track stored as several WAV files, read as one continuous signal.
 
-    Reads raw PCM after the header, so files with an unfinished header (crash) still work.
+    Reads raw PCM by file position (no memory maps → no Windows file locks), so it works on files
+    with an unfinished header (crash) and on files that are still being written (live).
     """
 
-    def __init__(self, files: list[Path]):
-        self.files = list(files)
-        self._maps = [np.memmap(f, dtype="<i2", mode="r", offset=WAV_HEADER)
-                      if f.stat().st_size > WAV_HEADER else np.zeros(0, "<i2") for f in self.files]
+    def __init__(self, files: list[Path] | Callable[[], list[Path]]):
+        self._files_fn = files if callable(files) else (lambda f=list(files): f)
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.files = list(self._files_fn())
         self._starts = [0]
-        for m in self._maps:
-            self._starts.append(self._starts[-1] + len(m))
+        for f in self.files:
+            try:
+                n = max(f.stat().st_size - WAV_HEADER, 0) // 2
+            except OSError:
+                n = 0
+            self._starts.append(self._starts[-1] + n)
 
     @property
     def total_samples(self) -> int:
@@ -50,11 +57,13 @@ class TrackAudio:
         start, end = max(start, 0), min(end, self.total_samples)
         parts = []
         i = max(bisect.bisect_right(self._starts, start) - 1, 0)
-        while start < end and i < len(self._maps):
+        while start < end and i < len(self.files):
             local = start - self._starts[i]
             take = min(end, self._starts[i + 1]) - start
-            parts.append(self._maps[i][local : local + take])
-            start += take
+            if take > 0:
+                parts.append(np.fromfile(self.files[i], dtype="<i2", count=take,
+                                         offset=WAV_HEADER + 2 * local))
+                start += take
             i += 1
         if not parts:
             return np.zeros(0, np.float32)

@@ -1,6 +1,7 @@
 """Entry point.
 
     transcribe-anywhere              start the tray app
+    transcribe-anywhere-cli setup             first-time setup (devices, model download)
     transcribe-anywhere-cli devices           list microphones and system-audio sources
     transcribe-anywhere-cli record -s 30      record mic + system audio for 30 s (no UI)
     transcribe-anywhere-cli transcribe FILE   transcribe an audio file and print it
@@ -25,6 +26,26 @@ def _cmd_devices(_args) -> int:
     for d in list_inputs():
         kind = "SYSTEM" if d.is_loopback else "MIC   "
         print(f"  {kind}  {d.name}\n          id={d.id}")
+    return 0
+
+
+def _cmd_setup(args) -> int:
+    """First-time setup: check audio devices and download the speech model(s)."""
+    from transcribe_anywhere.transcription.engine import cuda_available, ensure_parakeet
+
+    print("Audiogeräte:")
+    try:
+        _cmd_devices(args)
+    except Exception as exc:  # setup must not stop here; the app shows device problems too
+        print(f"  (konnte nicht geprüft werden: {exc})")
+    print("\nSpracherkennung Parakeet v3 (≈ 670 MB):")
+    print("  bereit:", ensure_parakeet(print))
+    if cuda_available() or args.whisper:
+        print("\nWhisper large-v3-turbo (≈ 1,6 GB):")
+        from faster_whisper.utils import download_model
+
+        print("  bereit:", download_model("large-v3-turbo"))
+    print("\nAlles bereit.")
     return 0
 
 
@@ -57,10 +78,11 @@ def _cmd_record(args) -> int:
 
 def _make_transcriber(args):
     from transcribe_anywhere.config import Settings
-    from transcribe_anywhere.transcription.engine import Transcriber
+    from transcribe_anywhere.transcription.engine import create_transcriber
 
     s = Settings.load()
-    tr = Transcriber(args.model or s.model, args.device or s.compute_device, args.language or s.language, s.hotwords)
+    tr = create_transcriber(args.engine or s.engine, args.model or s.model, args.device or s.compute_device,
+                            args.language or s.language, s.hotwords)
     tr.load(lambda msg: print(msg, file=sys.stderr))
     return tr
 
@@ -99,7 +121,7 @@ def _cmd_transcribe_session(args) -> int:
 
     segments = transcribe_session(session, tr, show)
     print(file=sys.stderr)
-    session.status, session.model = "done", f"{tr.model_name} ({tr.device})"
+    session.status, session.model = "done", tr.label
     session.save()
     print(to_txt(session, segments))
     return 0
@@ -110,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="transcribe-anywhere", description="Lokale Meeting-Transkription")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("devices", help="Audiogeräte auflisten")
+    setup = sub.add_parser("setup", help="Ersteinrichtung: Geräte prüfen, Modelle laden")
+    setup.add_argument("--whisper", action="store_true", help="auch Whisper laden (sonst nur mit NVIDIA-GPU)")
     rec = sub.add_parser("record", help="Aufnahme ohne Oberfläche")
     rec.add_argument("-s", "--seconds", type=float, default=0, help="Dauer (0 = bis Strg+C)")
     rec.add_argument("-t", "--title", default="")
@@ -121,11 +145,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("-m", "--model", default="")
         p.add_argument("-l", "--language", default="")
         p.add_argument("-d", "--device", default="")
+        p.add_argument("-e", "--engine", default="", help="whisper | parakeet | auto")
         if name == "transcribe":
             p.add_argument("--no-vad", action="store_true", help="Stille nicht entfernen (nur zum Vergleich)")
     args = parser.parse_args(argv)
 
-    commands = {"devices": _cmd_devices, "record": _cmd_record,
+    commands = {"devices": _cmd_devices, "setup": _cmd_setup, "record": _cmd_record,
                 "transcribe": _cmd_transcribe, "transcribe-session": _cmd_transcribe_session}
     if args.cmd:
         return commands[args.cmd](args)

@@ -19,14 +19,20 @@ def config_dir() -> Path:
     return Path(user_config_dir(APP_DIR, appauthor=False))
 
 
+def models_dir() -> Path:
+    return Path(user_data_dir(APP_DIR, appauthor=False)) / "models"
+
+
 def default_storage_dir() -> Path:
     return Path(user_data_dir(APP_DIR, appauthor=False)) / "sessions"
 
 
 @dataclass
 class Settings:
-    language: str = "de"            # "de" | "en" | "auto"
-    model: str = "auto"             # "auto" | "large-v3-turbo" | "large-v3" | "small"
+    language: str = "de"            # "de" | "en" | "auto"   (Whisper only; Parakeet detects itself)
+    engine: str = "auto"            # "auto" (GPU → Whisper, else Parakeet) | "whisper" | "parakeet"
+    live: bool = True               # transcribe while recording
+    model: str = "auto"             # Whisper model: "auto" | "large-v3-turbo" | "large-v3" | "small"
     compute_device: str = "auto"    # "auto" | "cpu" | "cuda"
     mic_device: str = ""            # "" = OS default microphone
     loopback_device: str = ""       # "" = system audio of the OS default speaker

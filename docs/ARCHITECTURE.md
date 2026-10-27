@@ -7,7 +7,8 @@
 | Language | Python 3.11+ | Best ecosystem for local speech AI; fast to iterate. |
 | UI | PySide6 (Qt 6), pinned < 6.12 | Native-looking on Windows and Linux, tray icon, frameless overlay, LGPL. 6.12.0 has a refcount bug in QPainter calls that crashes Python < 3.12. |
 | Speech-to-text | faster-whisper (Whisper on CTranslate2) | Runs offline on CPU (int8) and NVIDIA GPU (float16); strong German; built-in Silero VAD. |
-| Default model | `large-v3-turbo` | Near large-v3 quality for German at a fraction of the cost; on CPU as fast as `medium` and more accurate. `small` as fast fallback. |
+| Speech-to-text (CPU) | Parakeet TDT 0.6B v3 int8 via `onnx-asr` | 28× real time on 4 cores (Whisper turbo: 3.6×), outputs nothing on silence/noise, German + English (auto-detected). Default without NVIDIA GPU. |
+| Default Whisper model | `large-v3-turbo` | Near large-v3 quality for German at a fraction of the cost; on CPU as fast as `medium` and more accurate. `small` as fast fallback. |
 | Audio capture | `soundcard` | One API for mic + system audio: WASAPI loopback on Windows, PulseAudio/PipeWire monitor sources on Linux. |
 | Paths | `platformdirs` | `%LOCALAPPDATA%\TranscribeAnywhere` on Windows, `~/.local/share/TranscribeAnywhere` on Linux. |
 | Packaging | PyInstaller → Inno Setup (Windows), AppImage (Linux) | See [DISTRIBUTION.md](DISTRIBUTION.md). |
@@ -82,8 +83,39 @@ silence, noise): 10/10 checks – 94–100 % word agreement around the cuts, med
 0.03 s, no text from silence/noise, duration exact. Unit tests cover reading across files, crashed
 headers, chunking, time mapping and the filters.
 
-Planned: transcribe **while recording** – the same chunker following the growing files, worker in a
-separate process.
+## Live transcription
+
+`transcription/live.py` follows the growing WAV files during the recording (the writer flushes every
+100 ms; tracks are read by file position, no memory maps → no Windows file locks):
+
+1. every second, run the VAD over audio that arrived since the last scan (max. 2 min at a time)
+2. speech regions followed by ≥ 1.5 s of audio are finished → pending; a region still running is
+   scanned again next time (so nothing is cut mid-word)
+3. pending speech is cut into chunks exactly like the offline pipeline and transcribed
+   (Parakeet: as soon as 3 s are pending; Whisper: 20 s, because it always computes 30-s windows)
+
+After Stop the rest is processed; if live crashes, the full pipeline runs after the recording.
+
+Measured (4 cores / 8 threads of the dev machine, `tools/simulate_live.py`):
+
+| Engine | Meeting played at | Lag while recording | Wait after Stop | Full run instead |
+|---|---|---|---|---|
+| Parakeet | 4× real time (20 min in 5) | median 7.5 s, max 31 s | 0.6 s | 50 s |
+| Whisper turbo | 2× real time (8 min in 4) | median 22 s, max 42 s | 8.8 s | 149 s |
+
+Live and full transcripts differ in ~15 % of words because the recognisers react to where audio is
+cut. Against a Whisper-GPU reference both scored the same (Parakeet live 80.8 %, full 80.9 %), so
+nothing is lost. Unit tests check with a simulated growing recording that every speech burst is
+transcribed exactly once with the right time.
+
+## Parakeet notes
+
+- Must get short pieces: on 3 minutes of uncut audio it dropped a whole sentence; the pipeline's
+  ≤ 60-s chunks are fine (verify tool: 10/10, timestamps within 0.08 s).
+- The model is downloaded into a plain folder (`%LOCALAPPDATA%\TranscribeAnywhere\models`):
+  onnxruntime 1.31 refuses model data behind the Hugging Face cache's links.
+- No language lock and no custom vocabulary; use Whisper (re-transcribe) when that matters.
+
 
 ## Local AI (optional)
 

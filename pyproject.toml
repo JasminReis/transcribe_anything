@@ -13,6 +13,7 @@ dependencies = [
     "PySide6>=6.7,<6.12",
     "soundcard>=0.4.3",
     "faster-whisper>=1.1",
+    "onnx-asr>=0.12,<0.13",       # Parakeet v3 via onnxruntime (young API → pinned minor)
     "numpy>=1.26",
     "platformdirs>=4.0",
 ]

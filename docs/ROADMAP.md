@@ -15,8 +15,11 @@
 ## Phase 1 – MVP usable on Windows (target: Ryzen AI 5 330, CPU only)
 - [ ] Test capture on the target Windows laptop (Teams, Zoom, headset + speakers)
 - [ ] Measure speed of large-v3-turbo / small on that laptop during a running call
-- [ ] Transcribe while recording (follow growing files, VAD-based chunks) – needed because the
-      laptop has no GPU; worker in a separate process
+- [x] Transcribe while recording (follows the growing files, same cutting as offline)
+- [x] Parakeet v3 engine (8× faster than Whisper on CPU) – default without NVIDIA GPU
+- [x] Windows installer (`install-windows.bat`) + laptop guide + performance check
+- [ ] Run the installer and a real Teams/Zoom call on the laptop (installer untested on Windows!)
+- [ ] Worker in a separate process (a crash in the recogniser cannot stop the recording)
 - [ ] First-run wizard incl. model download progress
 - [ ] Search across all transcripts (SQLite FTS5)
 - [ ] DOCX export, copy to clipboard

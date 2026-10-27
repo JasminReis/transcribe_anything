@@ -25,13 +25,15 @@ from transcribe_anywhere.transcription.segmenter import (
 
 @dataclass
 class Progress:
-    stage: str                      # "load" | "analyse" | "transcribe" | "done"
+    stage: str                      # "load" | "analyse" | "transcribe" | "live" | "finish" | "done"
     fraction: float = 0.0           # 0..1 within the stage
     audio_seconds: float = 0.0      # length of all tracks together
     speech_seconds: float = 0.0     # speech found in all tracks
     done_seconds: float = 0.0       # speech already transcribed
     elapsed: float = 0.0            # seconds spent in the current stage
     last_text: str = ""
+    lag: float = 0.0                # live: recorded audio not yet transcribed (seconds)
+    engine: str = ""
 
     @property
     def speed(self) -> float:
@@ -40,6 +42,8 @@ class Progress:
 
     @property
     def eta(self) -> float | None:
+        if self.stage == "finish" and self.fraction > 0.05 and self.elapsed > 2:
+            return self.elapsed * (1 - self.fraction) / self.fraction
         if self.stage != "transcribe" or self.speed <= 0:
             return None
         return (self.speech_seconds - self.done_seconds) / self.speed

@@ -30,7 +30,7 @@ def test_track_reads_continuously_across_files(tmp_path):
 def test_track_survives_unfinished_header(tmp_path):
     w = SegmentedWavWriter(tmp_path, "mic", SR, segment_seconds=60)
     w.write(np.full(SR, 0.25, np.float32))
-    w._wav._file.flush()            # simulate a crash: data on disk, header never finalised
+    # simulate a crash: data is on disk (flushed), header never finalised
     track = TrackAudio(sorted(tmp_path.glob("mic_*.wav")))
     assert track.total_samples == SR
 

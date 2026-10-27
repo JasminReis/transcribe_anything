@@ -47,6 +47,10 @@ class SettingsDialog(QDialog):
         ]
 
         self.language = _combo([("de", "Deutsch"), ("en", "Englisch"), ("auto", "Automatisch")], settings.language)
+        self.engine = _combo([("auto", "Automatisch (NVIDIA-GPU: Whisper, sonst Parakeet)"),
+                              ("parakeet", "Parakeet v3 – schnell, ideal für Laptops"),
+                              ("whisper", "Whisper – genauer, braucht GPU für Live")], settings.engine)
+        self.live = QCheckBox("Während der Aufnahme live transkribieren", checked=settings.live)
         self.model = _combo([("auto", "Automatisch (large-v3-turbo)")] + [(m, m) for m in MODELS], settings.model)
         self.device = _combo(
             [("auto", "Automatisch (GPU wenn verfügbar)"), ("cpu", "CPU"), ("cuda", "NVIDIA GPU")],
@@ -68,8 +72,10 @@ class SettingsDialog(QDialog):
         self.minimized = QCheckBox("Minimiert im Tray starten", checked=settings.start_minimized)
 
         form = QFormLayout(self)
-        form.addRow("Sprache", self.language)
-        form.addRow("Modell", self.model)
+        form.addRow("Spracherkennung", self.engine)
+        form.addRow("", self.live)
+        form.addRow("Sprache (Whisper)", self.language)
+        form.addRow("Whisper-Modell", self.model)
         form.addRow("Rechenwerk", self.device)
         form.addRow("Mikrofon", self.mic)
         form.addRow("Systemaudio", self.loopback)
@@ -90,6 +96,8 @@ class SettingsDialog(QDialog):
 
     def apply(self) -> None:
         s = self.settings
+        s.engine = self.engine.currentData()
+        s.live = self.live.isChecked()
         s.language = self.language.currentData()
         s.model = self.model.currentData()
         s.compute_device = self.device.currentData()

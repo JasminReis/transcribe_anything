@@ -29,6 +29,8 @@ TITLES = {
     "analyse": "Sprache wird gesucht",
     "load": "Spracherkennung startet",
     "transcribe": "Transkribiere",
+    "live": "Live-Transkription",
+    "finish": "Letzte Abschnitte werden transkribiert",
     "done": "Fertig",
 }
 
@@ -48,6 +50,7 @@ class ProgressRing(QWidget):
         self._target = 0.0
         self._spin = 0.0
         self.indeterminate = True
+        self.center_text = ""
         self._anim = QVariantAnimation(self, duration=450, easingCurve=QEasingCurve.OutCubic)
         self._anim.valueChanged.connect(self._set_value)
         self._timer = QTimer(self, interval=16, timeout=self._tick)
@@ -84,15 +87,20 @@ class ProgressRing(QWidget):
         for pos, color in ((0.0, ACCENT), (0.33, ACCENT_2), (0.66, ACCENT_3), (1.0, ACCENT)):
             grad.setColorAt(pos, QColor(color))
         p.setPen(QPen(grad, 8, Qt.SolidLine, Qt.RoundCap))
+        f = QFont(self.font())
+        f.setWeight(QFont.DemiBold)
         if self.indeterminate:
             p.drawArc(r, int((90 - self._spin) * 16), int(-100 * 16))
+            if self.center_text:
+                f.setPointSizeF(11)
+                p.setFont(f)
+                p.setPen(QColor(ACCENT))
+                p.drawText(r, Qt.AlignCenter, self.center_text)
         else:
             # the gradient keeps slowly rotating → the ring looks alive even when progress is slow
             p.drawArc(r, 90 * 16, int(-360 * 16 * max(self._value, 0.01)))
             p.setPen(self.palette().text().color())
-            f = QFont(self.font())
             f.setPointSizeF(13)
-            f.setWeight(QFont.DemiBold)
             p.setFont(f)
             p.drawText(r, Qt.AlignCenter, f"{int(self._value * 100)} %")
 
@@ -148,21 +156,42 @@ class ProgressCard(QWidget):
         self._last_text = ""
         self.set_queued()
 
-    def set_queued(self) -> None:
+    def set_queued(self, live: bool = False) -> None:
         self.ring.indeterminate = True
-        self.title.setText(TITLES["queued"])
+        self.ring.center_text = "LIVE" if live else ""
+        self.title.setText(TITLES["live"] if live else TITLES["queued"])
         self.eta.clear()
         self._set_chips("queued")
-        self.stats.setText("Die Transkription startet gleich.")
+        for c in self.chips:
+            c.setVisible(not live)
+        self.stats.setText("Live-Transkription startet …" if live else "Die Transkription startet gleich.")
         self.ticker.clear()
+        self._last_text = ""
 
     def update_progress(self, p) -> None:
         self.title.setText(TITLES.get(p.stage, p.stage))
         self._set_chips(p.stage)
+        live = p.stage in ("live", "finish")
+        for c in self.chips:
+            c.setVisible(not live)
+        self.ring.center_text = "LIVE" if p.stage == "live" else ""
         if p.stage == "load":
             self.ring.indeterminate = True
-            self.stats.setText("Das Sprachmodell wird geladen – beim ersten Mal wird es heruntergeladen.")
+            self.stats.setText(f"{p.engine or 'Spracherkennung'} wird geladen – "
+                               "beim ersten Mal wird das Modell heruntergeladen.")
             self.eta.clear()
+        elif p.stage == "live":
+            self.ring.indeterminate = True
+            state = "aktuell" if p.lag < 45 else f"Rückstand {_clock(p.lag)}"
+            self.stats.setText(f"Mitgeschrieben bis {_clock(p.done_seconds)} von {_clock(p.audio_seconds)}"
+                               f" · {state} · {p.engine}")
+            self.eta.clear()
+        elif p.stage == "finish":
+            self.ring.indeterminate = False
+            self.ring.set_value(p.fraction)
+            self.stats.setText(f"Noch {_clock(p.lag)} Aufnahme offen · {p.engine}")
+            eta = p.eta
+            self.eta.setText(f"noch ca. {_eta_text(eta)}" if eta is not None else "")
         elif p.stage == "analyse":
             self.ring.indeterminate = False
             self.ring.set_value(0.1 * p.fraction)

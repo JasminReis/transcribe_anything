@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from transcribe_anywhere.audio.writer import SegmentedWavWriter  # noqa: E402
 from transcribe_anywhere.session.session import Session  # noqa: E402
-from transcribe_anywhere.transcription.engine import Transcriber  # noqa: E402
+from transcribe_anywhere.transcription.engine import create_transcriber  # noqa: E402
 from transcribe_anywhere.transcription.job import transcribe_session  # noqa: E402
 from transcribe_anywhere.transcription.segmenter import SR, ArrayAudio, TrackAudio  # noqa: E402
 
@@ -44,6 +44,7 @@ def main() -> int:
     ap.add_argument("speech")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--model", default="large-v3-turbo")
+    ap.add_argument("--engine", default="whisper", help="whisper | parakeet")
     args = ap.parse_args()
 
     speech = ArrayAudio.from_file(Path(args.speech)).samples
@@ -56,7 +57,7 @@ def main() -> int:
     mic = np.concatenate([np.zeros(sec(20)), speech[: sec(180)], noise, np.zeros(sec(40))]).astype(np.float32)
     system = np.concatenate([np.zeros(sec(100)), speech[sec(180): sec(300)], np.zeros(sec(80))]).astype(np.float32)
 
-    tr = Transcriber(args.model, args.device, "de")
+    tr = create_transcriber(args.engine, args.model, args.device, "de")
     tr.load(print)
     results = []
 
@@ -74,9 +75,22 @@ def main() -> int:
         session.duration = 300
         session.save()
 
-        print("\nReference: sample transcribed directly (no cutting)")
-        ref_mic = list(tr.transcribe(speech[: sec(180)]))
-        ref_sys = list(tr.transcribe(speech[sec(180): sec(300)]))
+        if args.engine == "whisper":
+            print("\nReference: sample transcribed directly by Whisper (no cutting)")
+            ref_mic = list(tr.transcribe(speech[: sec(180)]))
+            ref_sys = list(tr.transcribe(speech[sec(180): sec(300)]))
+        else:
+            # Parakeet on minutes of uncut audio drops whole sentences, so it is a bad reference.
+            # Compare with the same speech cut at pauses but WITHOUT file borders / silence padding.
+            print("\nReference: sample cut at pauses, no file borders")
+            from transcribe_anywhere.transcription.job import transcribe_chunk
+            from transcribe_anywhere.transcription.segmenter import detect_speech, plan_chunks
+
+            def chunked(samples):
+                src = ArrayAudio(samples)
+                return [g for c in plan_chunks(detect_speech(src)) for g in transcribe_chunk(c, src, tr)]
+
+            ref_mic, ref_sys = chunked(speech[: sec(180)]), chunked(speech[sec(180): sec(300)])
 
         print("Pipeline: session transcribed with silence removal + cutting")
         segs = transcribe_session(session, tr)
@@ -99,9 +113,10 @@ def main() -> int:
         devs = []
         for got, ref, offset in ((mic_segs, ref_mic, 20.0), (sys_segs, ref_sys, 100.0)):
             for g in got:
-                best = max(ref, key=lambda r: difflib.SequenceMatcher(None, r.text, g.text).ratio())
-                if difflib.SequenceMatcher(None, best.text, g.text).ratio() > 0.8:
-                    devs.append(abs(g.start - (best.start + offset)))
+                # the sample repeats some sentences ~10 s apart → among similar ones take the nearest
+                similar = [r for r in ref if difflib.SequenceMatcher(None, r.text, g.text).ratio() > 0.8]
+                if similar:
+                    devs.append(min(abs(g.start - (r.start + offset)) for r in similar))
         # Whisper may group sentences differently in the cut audio (start moves by one phrase),
         # so a single sentence can be ~2 s off while the mapping itself is exact (median).
         check("timestamps on meeting timeline", bool(devs) and np.median(devs) < 0.3 and max(devs) < 2.5,
@@ -117,6 +132,9 @@ def main() -> int:
         check("duration preserved", all(abs(d - 300) < 0.01 for d in dur.values()), f"{dur}")
         check("speech share", True, f"{Session.load(session.folder).speech_seconds:.0f} s speech of 600 s audio")
 
+    if args.engine != "whisper":
+        print(f"\n{sum(results)}/{len(results)} checks passed")
+        return 0 if all(results) else 1
     print("\nFor comparison – raw Whisper on noise + silence (100 s), no silence removal, no filter:")
     raw = np.concatenate([noise, np.zeros(sec(40))]).astype(np.float32)
     phantom, _ = tr._model.transcribe(raw, language="de", vad_filter=False, condition_on_previous_text=False)

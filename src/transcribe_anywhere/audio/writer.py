@@ -20,12 +20,14 @@ class SegmentedWavWriter:
         self._index = 0
         self._in_segment = 0
         self._wav: wave.Wave_write | None = None
+        self._file = None
         self._lock = threading.Lock()
         self._closed = False
 
     def _open_next(self) -> None:
         path = self.folder / f"{self.prefix}_{self._index:03d}.wav"
-        self._wav = wave.open(str(path), "wb")
+        self._file = open(path, "wb")
+        self._wav = wave.open(self._file, "wb")
         self._wav.setnchannels(1)
         self._wav.setsampwidth(2)
         self._wav.setframerate(self.samplerate)
@@ -47,9 +49,10 @@ class SegmentedWavWriter:
                 self._in_segment += take
                 self.total_frames += take
                 if self._in_segment >= self.segment_frames:
-                    self._wav.close()
-                    self._wav = None
+                    self._close_file()
                     self._index += 1
+            if self._wav is not None:
+                self._file.flush()          # live transcription reads the growing file
 
     def pad_to(self, frames: int) -> None:
         """Append silence until the stream is `frames` long (keeps tracks aligned)."""
@@ -57,9 +60,13 @@ class SegmentedWavWriter:
         if missing > 0:
             self.write(np.zeros(missing, dtype=np.float32))
 
+    def _close_file(self) -> None:
+        self._wav.close()           # patches the WAV header; does not close a passed-in file
+        self._file.close()
+        self._wav = None
+
     def close(self) -> None:
         with self._lock:
             if self._wav is not None:
-                self._wav.close()
-                self._wav = None
+                self._close_file()
             self._closed = True

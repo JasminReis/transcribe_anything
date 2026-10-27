@@ -55,6 +55,8 @@ class RecordingPill(QWidget):
         self.timer_label.setStyleSheet("color: white; font: 600 14px monospace;")
         self.mic = LevelMeter("Mic")
         self.system = LevelMeter("System")
+        self.live = QLabel()
+        self.live.setStyleSheet("font: 600 12px;")
 
         marker = QToolButton(text="⚑", toolTip="Marker setzen")
         stop = QToolButton(text="■", toolTip="Aufnahme beenden")
@@ -71,7 +73,7 @@ class RecordingPill(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(14, 8, 10, 8)
         row.setSpacing(10)
-        for w in (self.dot, self.timer_label, self.mic, self.system, marker, stop):
+        for w in (self.dot, self.timer_label, self.mic, self.system, self.live, marker, stop):
             row.addWidget(w)
 
         self._tick = QTimer(self, interval=100, timeout=self._refresh)
@@ -93,6 +95,12 @@ class RecordingPill(QWidget):
         levels = self.controller.levels()
         self.mic.set_value(rms_to_level(levels.get("mic", 0.0)))
         self.system.set_value(rms_to_level(levels.get("system", 0.0)))
+        live = self.controller.live_status()
+        self.live.setVisible(live is not None)
+        if live:
+            self.live.setText(live[0])
+            self.live.setStyleSheet(f"color: {live[1]}; font: 600 12px;")
+            self.adjustSize()
         self.dot.setVisible(int(self.controller.elapsed * 2) % 2 == 0)
 
     def paintEvent(self, _event) -> None:

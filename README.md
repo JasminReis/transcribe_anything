@@ -4,6 +4,7 @@ Local meeting transcription for Windows (and Linux): records your microphone **a
 (Teams, Zoom, Meet, …), transcribes offline with Whisper – German first, English second – and keeps
 a searchable library of sessions. Built for long meetings (1–2 h and more).
 
+- **Install on a Windows laptop: [docs/SETUP_LAPTOP.md](docs/SETUP_LAPTOP.md)** (double-click `install-windows.bat`)
 - Product concept, start and feel: [docs/CONCEPT.md](docs/CONCEPT.md)
 - Technical design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Plan: [docs/ROADMAP.md](docs/ROADMAP.md)
@@ -49,11 +50,13 @@ src/transcribe_anywhere/
   __main__.py          entry point (GUI + CLI)
   config.py            settings (JSON in the OS config dir)
   audio/               device lookup, capture threads, rotating WAV writer
-  transcription/       faster-whisper engine, session → transcript job
+  transcription/       engines (Whisper, Parakeet), silence removal/cutting, live + full jobs
   session/             session folders, transcript JSONL, library/recovery, export
   ui/                  PySide6: tray app, main window, recording pill, settings
   llm/                 optional local AI via Ollama: hardware check, summary, correction
 tools/verify_pipeline.py  end-to-end check of silence removal and cutting with a real speech file
+tools/simulate_live.py    plays a fake meeting through the recorder to test live transcription
+tools/windows/            installer script and performance check for Windows
 tests/                 headless tests of the core
 docs/                  concept, architecture, roadmap
 ```

@@ -149,7 +149,12 @@ class MainWindow(QMainWindow):
             menu.addAction(label, lambda e=ext: self._export(e))
         self.export_btn.setMenu(menu)
         self.folder_btn = QPushButton("Ordner öffnen", clicked=self._open_folder)
-        self.retranscribe_btn = QPushButton("Neu transkribieren", clicked=self._retranscribe)
+        self.retranscribe_btn = QToolButton(text="Neu transkribieren", popupMode=QToolButton.MenuButtonPopup)
+        self.retranscribe_btn.clicked.connect(lambda: self._retranscribe(None))
+        rmenu = QMenu(self.retranscribe_btn)
+        rmenu.addAction("Mit Whisper (genauer, auf CPU langsam)", lambda: self._retranscribe("whisper"))
+        rmenu.addAction("Mit Parakeet (schnell)", lambda: self._retranscribe("parakeet"))
+        self.retranscribe_btn.setMenu(rmenu)
         self.version_box = QComboBox()
         self.version_box.addItem("Original", "original")
         self.version_box.addItem("✨ KI-korrigiert", "corrected")
@@ -281,9 +286,10 @@ class MainWindow(QMainWindow):
         self.version_box.setVisible(has_corrected)
         if not has_corrected:
             self.version_box.setCurrentIndex(0)
-        if s.status in ("recorded", "transcribing"):
-            if s.status == "recorded":
-                self.progress_card.set_queued()
+        live = s.status == "recording" and self.controller.settings.live
+        if s.status in ("recorded", "transcribing") or live:
+            if s.status == "recorded" or (live and self.controller.live_progress is None):
+                self.progress_card.set_queued(live=live)
             self.progress_card.show()
         else:
             self.progress_card.hide()
@@ -303,7 +309,9 @@ class MainWindow(QMainWindow):
         segments = self._segments_for(s)
         if not segments:
             hint = {
-                "recording": "Aufnahme läuft. Das Transkript erscheint nach dem Beenden.",
+                "recording": ("Live-Transkription läuft – der Text erscheint hier nach den ersten Sätzen."
+                              if self.controller.settings.live else
+                              "Aufnahme läuft. Das Transkript erscheint nach dem Beenden."),
                 "recorded": "",
                 "transcribing": "Der Text erscheint hier Abschnitt für Abschnitt …",
                 "interrupted": "Die Sitzung wurde unterbrochen. Audio ist gespeichert – "
@@ -325,7 +333,7 @@ class MainWindow(QMainWindow):
                 f"<td>{html.escape(text)}</td></tr>"
             )
         bar = self.view.verticalScrollBar()
-        follow = s.status == "transcribing" and bar.value() >= bar.maximum() - 4
+        follow = s.status in ("recording", "transcribing") and bar.value() >= bar.maximum() - 4
         pos = bar.value()
         self.view.setHtml("<table cellspacing='0' cellpadding='3'>" + "".join(rows) + "</table>")
         bar.setValue(bar.maximum() if follow else pos)
@@ -334,11 +342,13 @@ class MainWindow(QMainWindow):
         if session_id != self._current_id():
             return
         s = self._sessions.get(session_id)
-        if s and s.status != "transcribing":
+        if s and s.status not in ("recording", "transcribing"):
             self.refresh_sessions()          # status changed (e.g. queued → transcribing)
             return
         self.progress_card.show()
         self.progress_card.update_progress(p)
+        if p.done_seconds and not self.copy_btn.isEnabled():
+            self.copy_btn.setEnabled(True)       # copying works mid-meeting, too
         now = time.monotonic()
         if p.stage == "done" or now - self._last_render > 1.5:   # partial transcript, throttled
             self._last_render = now
@@ -380,10 +390,10 @@ class MainWindow(QMainWindow):
         if s:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(s.folder)))
 
-    def _retranscribe(self) -> None:
+    def _retranscribe(self, engine: str | None) -> None:
         s = self._current()
         if s:
-            self.controller.transcribe(s)
+            self.controller.transcribe(s, engine)
 
     def select_session(self, session_id: str) -> None:
         for i in range(self.list.count()):
