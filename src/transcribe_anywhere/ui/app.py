@@ -88,6 +88,7 @@ class App:
         if dialog.exec():
             dialog.apply()
             self.window.refresh_sessions()
+            self.window.ai.refresh()
 
     def show_window(self) -> None:
         self.window.show()

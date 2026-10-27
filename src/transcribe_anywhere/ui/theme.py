@@ -12,6 +12,10 @@ STATE_COLORS = {
 }
 SPEAKER_COLORS = {"Ich": "#2563eb", "Andere": "#16a34a", "⚑": "#f5a524"}
 
+ACCENT = "#7c3aed"      # violet
+ACCENT_2 = "#2563eb"    # blue
+ACCENT_3 = "#06b6d4"    # cyan
+
 STYLE = """
 QPushButton#recordButton {
     background: #e5484d; color: white; font-weight: 600; font-size: 14px;
@@ -19,8 +23,32 @@ QPushButton#recordButton {
 }
 QPushButton#recordButton:hover { background: #d13d42; }
 QPushButton#recordButton[recording="true"] { background: #334155; }
+
+QPushButton#primary, QToolButton#primary {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c3aed, stop:1 #2563eb);
+    color: white; font-weight: 600; border: none; border-radius: 8px; padding: 7px 14px;
+}
+QPushButton#primary:hover, QToolButton#primary:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6d28d9, stop:1 #1d4ed8);
+}
+QPushButton#primary:disabled, QToolButton#primary:disabled { background: #cbd5e1; color: #f8fafc; }
+QToolButton#primary::menu-button { border: none; width: 18px; }
+
+QTabWidget::pane { border: none; }
+QTabBar::tab {
+    padding: 7px 16px; margin-right: 4px; border: none; border-bottom: 2px solid transparent;
+    font-weight: 500; color: #64748b;
+}
+QTabBar::tab:selected { color: #7c3aed; border-bottom: 2px solid #7c3aed; }
+
 QListWidget { font-size: 13px; }
 QListWidget::item { padding: 8px 6px; }
+QProgressBar#thin { border: none; background: rgba(124,58,237,0.12); border-radius: 2px; max-height: 4px; }
+QProgressBar#thin::chunk { border-radius: 2px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c3aed, stop:1 #06b6d4); }
+QLabel#toast {
+    background: rgba(15,23,42,0.92); color: white; border-radius: 16px; padding: 8px 18px; font-weight: 500;
+}
 """
 
 

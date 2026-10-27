@@ -76,6 +76,10 @@ class Transcriber:
         self.device = ""
         self._model = None
 
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
     def load(self, status: Callable[[str], None] = lambda _msg: None) -> None:
         from faster_whisper import WhisperModel
 

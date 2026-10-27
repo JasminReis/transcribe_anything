@@ -32,6 +32,8 @@ class Settings:
     loopback_device: str = ""       # "" = system audio of the OS default speaker
     storage_dir: str = ""           # "" = default_storage_dir()
     hotwords: str = ""              # names / jargon that should be recognised
+    ollama_url: str = "http://localhost:11434"
+    llm_model: str = ""             # "" = recommended model for this hardware
     consent_reminder: bool = True
     start_minimized: bool = False
 

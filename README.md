@@ -52,6 +52,8 @@ src/transcribe_anywhere/
   transcription/       faster-whisper engine, session → transcript job
   session/             session folders, transcript JSONL, library/recovery, export
   ui/                  PySide6: tray app, main window, recording pill, settings
+  llm/                 optional local AI via Ollama: hardware check, summary, correction
+tools/verify_pipeline.py  end-to-end check of silence removal and cutting with a real speech file
 tests/                 headless tests of the core
 docs/                  concept, architecture, roadmap
 ```

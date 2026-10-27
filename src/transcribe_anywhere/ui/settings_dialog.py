@@ -55,6 +55,7 @@ class SettingsDialog(QDialog):
         self.mic = _combo(mics, settings.mic_device)
         self.loopback = _combo(loops, settings.loopback_device)
         self.hotwords = QLineEdit(settings.hotwords, placeholderText="z. B. Ehrenfried, Kubernetes, Q3-Roadmap")
+        self.hotwords.setToolTip("Hilft der Spracherkennung und der KI-Korrektur bei Namen und Fachbegriffen.")
         self.storage = QLineEdit(str(settings.storage_path))
         browse = QPushButton("…", clicked=self._browse)
         storage_row = QWidget()
@@ -62,6 +63,7 @@ class SettingsDialog(QDialog):
         h.setContentsMargins(0, 0, 0, 0)
         h.addWidget(self.storage)
         h.addWidget(browse)
+        self.ollama_url = QLineEdit(settings.ollama_url, placeholderText="http://localhost:11434")
         self.consent = QCheckBox("Vor jeder Aufnahme an die Einwilligung erinnern", checked=settings.consent_reminder)
         self.minimized = QCheckBox("Minimiert im Tray starten", checked=settings.start_minimized)
 
@@ -73,6 +75,7 @@ class SettingsDialog(QDialog):
         form.addRow("Systemaudio", self.loopback)
         form.addRow("Fachbegriffe", self.hotwords)
         form.addRow("Speicherort", storage_row)
+        form.addRow("Ollama (lokale KI)", self.ollama_url)
         form.addRow("", self.consent)
         form.addRow("", self.minimized)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -94,6 +97,7 @@ class SettingsDialog(QDialog):
         s.loopback_device = self.loopback.currentData()
         s.hotwords = self.hotwords.text()
         s.storage_dir = self.storage.text().strip()
+        s.ollama_url = self.ollama_url.text().strip() or "http://localhost:11434"
         s.consent_reminder = self.consent.isChecked()
         s.start_minimized = self.minimized.isChecked()
         s.save()

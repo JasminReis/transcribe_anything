@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import queue
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +24,7 @@ log = logging.getLogger(__name__)
 class TranscriptionWorker(QThread):
     """Processes sessions one after another; keeps the model loaded between jobs."""
 
-    progress = Signal(str, int, int)        # session id, done, total
+    progress = Signal(str, object)          # session id, job.Progress
     finished_session = Signal(str, str)     # session id, final status
     status = Signal(str)
 
@@ -48,8 +50,7 @@ class TranscriptionWorker(QThread):
         key = (s.model, s.compute_device, session.language, s.hotwords)
         if self._transcriber is None or key != self._key:
             self._transcriber = Transcriber(s.model, s.compute_device, session.language, s.hotwords)
-            self._transcriber.load(self.status.emit)
-            self._key = key
+            self._key = key          # the model itself is loaded lazily by the job
         return self._transcriber
 
     def run(self) -> None:
@@ -58,16 +59,19 @@ class TranscriptionWorker(QThread):
             session = Session.load(folder)
             session.status, session.error = "transcribing", ""
             session.save()
-            self.progress.emit(session.id, 0, 0)
+            last = {"t": 0.0, "stage": ""}
+
+            def report(p, sid=session.id):
+                # throttle to ~10 updates/s, but never drop a stage change
+                now = time.monotonic()
+                if p.stage != last["stage"] or now - last["t"] > 0.1 or p.stage == "done":
+                    last.update(t=now, stage=p.stage)
+                    self.progress.emit(sid, dataclasses.replace(p))
+
             try:
                 tr = self._transcriber_for(session)
+                transcribe_session(session, tr, report, should_cancel=lambda: self._cancel)
                 session.model = f"{tr.model_name} ({tr.device})"
-                transcribe_session(
-                    session,
-                    tr,
-                    on_progress=lambda d, t, sid=session.id: self.progress.emit(sid, d, t),
-                    should_cancel=lambda: self._cancel,
-                )
                 session.status = "done"
             except Cancelled:
                 session.status = "interrupted"
@@ -84,7 +88,7 @@ class TranscriptionWorker(QThread):
 class Controller(QObject):
     state_changed = Signal(str)            # idle | recording | transcribing
     sessions_changed = Signal()
-    progress = Signal(str, int, int)
+    progress = Signal(str, object)
     notify = Signal(str, str)              # title, message
     status = Signal(str)
 

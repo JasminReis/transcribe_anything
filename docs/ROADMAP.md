@@ -1,11 +1,16 @@
 # Roadmap
 
-## Phase 0 – Skeleton (now)
+## Phase 0 – Skeleton and core quality (done)
 - [x] Concept, architecture, project layout
 - [x] Device listing, dual-track recording to rotating WAV files
 - [x] Transcription after stop (faster-whisper, German default), partial results while running
 - [x] Tray icon, recording pill, main window with session library, settings, export TXT/MD/SRT
 - [x] Crash recovery (interrupted sessions can be re-transcribed)
+- [x] Silence/noise removal before Whisper, cutting only at pauses, exact meeting timestamps
+- [x] Phantom-phrase filter; verification tool with real speech (`tools/verify_pipeline.py`)
+- [x] Animated progress card (stages, speed, remaining time, live sentence)
+- [x] Copy transcript (with times / plain text / Markdown), Original ↔ KI-korrigiert view
+- [x] Local AI via Ollama: hardware check, model recommendation + download, summary, correction
 
 ## Phase 1 – MVP usable on Windows (target: Ryzen AI 5 330, CPU only)
 - [ ] Test capture on the target Windows laptop (Teams, Zoom, headset + speakers)

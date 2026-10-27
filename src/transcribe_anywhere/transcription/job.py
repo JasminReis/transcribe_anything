@@ -85,6 +85,10 @@ def transcribe_session(
     session.save()
 
     # 2. transcribe --------------------------------------------------------------
+    if not transcriber.loaded and work:
+        p.stage, p.fraction = "load", 0.0
+        on_progress(p)
+        transcriber.load()
     p.stage, p.fraction, p.elapsed = "transcribe", 0.0, 0.0
     on_progress(p)
     t0 = time.monotonic()

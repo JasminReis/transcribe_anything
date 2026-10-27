@@ -83,6 +83,14 @@ class Session:
         return self.folder / "transcript.jsonl"
 
     @property
+    def corrected_path(self) -> Path:
+        return self.folder / "transcript.corrected.jsonl"
+
+    @property
+    def summary_path(self) -> Path:
+        return self.folder / "summary.md"
+
+    @property
     def status_label(self) -> str:
         return STATUS_LABELS.get(self.status, self.status)
 

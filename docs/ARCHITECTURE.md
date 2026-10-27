@@ -5,7 +5,7 @@
 | Concern | Choice | Why |
 |---|---|---|
 | Language | Python 3.11+ | Best ecosystem for local speech AI; fast to iterate. |
-| UI | PySide6 (Qt 6) | Native-looking on Windows and Linux, tray icon, frameless overlay, LGPL. |
+| UI | PySide6 (Qt 6), pinned < 6.12 | Native-looking on Windows and Linux, tray icon, frameless overlay, LGPL. 6.12.0 has a refcount bug in QPainter calls that crashes Python < 3.12. |
 | Speech-to-text | faster-whisper (Whisper on CTranslate2) | Runs offline on CPU (int8) and NVIDIA GPU (float16); strong German; built-in Silero VAD. |
 | Default model | `large-v3-turbo` | Near large-v3 quality for German at a fraction of the cost; on CPU as fast as `medium` and more accurate. `small` as fast fallback. |
 | Audio capture | `soundcard` | One API for mic + system audio: WASAPI loopback on Windows, PulseAudio/PipeWire monitor sources on Linux. |
@@ -61,12 +61,47 @@ and offer "delete audio after N days".
 
 ## Transcription pipeline
 
-v1 (this skeleton): after *Stop*, a background worker transcribes each 5-minute file of both tracks,
-merges segments by time, and writes `transcript.jsonl` after every file (partial results are visible).
+```
+track (5-min WAV files)
+   │  1. analyse: Silero VAD in 5-min windows with 2 s overlap (no word lost at borders)
+   ▼
+speech regions ── silence/noise is dropped here, Whisper never sees it
+   │  2. group into chunks of ≤ 60 s speech, cut only between regions (= in pauses)
+   ▼
+chunk audio (regions glued with 0.25 s gaps) ──Whisper──▶ chunk times ──map──▶ meeting times
+   │  3. filter known phantom phrases, collapse repeated lines
+   ▼
+transcript.jsonl (written after every chunk → partial results in the UI)
+```
 
-v2 (planned): transcribe **while recording** – the worker follows the growing files, cuts at VAD
-pauses instead of fixed 5-minute borders, and the transcript is ready seconds after the meeting ends.
-Run the worker in a separate process so a model crash cannot take down the recorder.
+Why: raw Whisper on 100 s of silence + noise produced "Untertitelung des ZDF, 2020" four times with
+full confidence (no_speech_prob 0.00) – confidence checks alone cannot catch this.
+
+Verified with `tools/verify_pipeline.py <speech file>` (fake session: speech across file borders,
+silence, noise): 10/10 checks – 94–100 % word agreement around the cuts, median timestamp deviation
+0.03 s, no text from silence/noise, duration exact. Unit tests cover reading across files, crashed
+headers, chunking, time mapping and the filters.
+
+Planned: transcribe **while recording** – the same chunker following the growing files, worker in a
+separate process.
+
+## Local AI (optional)
+
+- Backend: [Ollama](https://ollama.com) on `localhost:11434` (Windows/Linux/macOS installer, model
+  downloads with progress via `/api/pull`). Standard-library HTTP client, streaming.
+- `llm/hardware.py` checks NVIDIA VRAM and RAM and recommends a model:
+  ≥ 20 GB VRAM `qwen3.5:27b` · ≥ 10 GB `qwen3.5:9b` · ≥ 6 GB / CPU with ≥ 15 GB RAM `gemma3:4b` ·
+  less → not offered. Installed variants are matched (`gemma3:4b` ↔ `gemma3:4b-it-q4_K_M`).
+- Summary: one pass if the transcript fits the context, otherwise notes per part + final protocol
+  (Kurzfassung, Themen, Entscheidungen, Aufgaben, Offene Fragen). Saved as `summary.md`.
+- Correction: batches of numbered lines (`17|text`), glossary from the "Fachbegriffe" setting,
+  answers that rewrite instead of correct are rejected. Saved as `transcript.corrected.jsonl`;
+  the original is never changed.
+- Measured: RTX 5090 + qwen3.5:27b ≈ 14 s each for a 6.5-min transcript. CPU only (4 threads) +
+  gemma3:4b: 154 s for the summary → on the target laptop a 2-h meeting summary may take around an
+  hour (estimate), correction much longer. The app shows such estimates before starting.
+- Correction quality depends strongly on model size: 27B fixed real recognition errors well, 9B also
+  made wrong "fixes". Hence correction is only recommended on GPUs.
 
 ## Platform differences
 
