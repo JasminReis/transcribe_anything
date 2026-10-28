@@ -31,6 +31,7 @@ class TrackRecorder(threading.Thread):
         self.t0 = t0                      # shared start time of all tracks
         self.level = 0.0                  # RMS of the last block, read by the UI
         self.error: Exception | None = None
+        self.muted = False                # muted: keep the timeline, but store silence
         self._stop_event = threading.Event()
 
     def run(self) -> None:
@@ -41,6 +42,8 @@ class TrackRecorder(threading.Thread):
                 while not self._stop_event.is_set():
                     data = rec.record(numframes=frames)
                     mono = data.mean(axis=1) if data.ndim == 2 else data
+                    if self.muted:
+                        mono = np.zeros(len(mono), dtype=np.float32)
                     # Windows loopback delivers nothing while no sound plays.
                     # Fill that gap with silence so all tracks share one timeline.
                     expected = int((time.monotonic() - self.t0) * self.samplerate)
@@ -81,6 +84,13 @@ class SessionRecorder:
 
     def levels(self) -> dict[str, float]:
         return {name: t.level for name, t in self.tracks.items()}
+
+    def set_muted(self, name: str, muted: bool) -> None:
+        if name in self.tracks:
+            self.tracks[name].muted = muted
+
+    def is_muted(self, name: str) -> bool:
+        return name in self.tracks and self.tracks[name].muted
 
     def errors(self) -> dict[str, Exception]:
         return {name: t.error for name, t in self.tracks.items() if t.error}

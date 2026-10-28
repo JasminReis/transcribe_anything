@@ -229,6 +229,15 @@ class Controller(QObject):
             self.session.markers.append(round(self.recorder.elapsed, 1))
             self.session.save()
 
+    @property
+    def mic_muted(self) -> bool:
+        return bool(self.recorder and self.recorder.is_muted("mic"))
+
+    def set_mic_muted(self, muted: bool) -> None:
+        """Mute your own microphone; the track keeps running and records silence."""
+        if self.recorder:
+            self.recorder.set_muted("mic", muted)
+
     def levels(self) -> dict[str, float]:
         return self.recorder.levels() if self.recorder else {}
 

@@ -54,3 +54,48 @@ def test_settings_ignore_unknown_keys(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text('{"language": "en", "obsolete": 1}', "utf-8")
     assert Settings.load(path).language == "en"
+
+
+def test_muted_track_records_silence_and_keeps_timeline(tmp_path):
+    import time
+
+    from transcribe_anywhere.audio.capture import SessionRecorder
+
+    class LoudSource:
+        """Fake device that always delivers a loud tone."""
+
+        def recorder(self, samplerate, blocksize):
+            src = self
+
+            class Rec:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+                def record(self, numframes):
+                    time.sleep(numframes / samplerate)
+                    return np.full((numframes, 2), 0.5, dtype=np.float32)
+            return Rec()
+
+    rec = SessionRecorder(tmp_path, {"mic": LoudSource(), "system": LoudSource()}, 1000, 60)
+    rec.start()
+    time.sleep(0.3)
+    rec.set_muted("mic", True)
+    assert rec.is_muted("mic") and not rec.is_muted("system")
+    time.sleep(0.4)
+    assert rec.levels()["mic"] == 0.0 and rec.levels()["system"] > 0.4
+    rec.set_muted("mic", False)
+    time.sleep(0.3)
+    rec.stop()
+
+    def samples(name):
+        with wave.open(str(tmp_path / f"{name}_000.wav")) as w:
+            return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+
+    mic, system = samples("mic"), samples("system")
+    assert len(mic) == len(system)                       # muting keeps both tracks in sync
+    assert (mic == 0).sum() >= 300                       # ~0.4 s of silence while muted
+    assert mic[:200].min() > 0 and mic[-100:].min() > 0  # sound before and after
+    assert (system == 0).sum() == 0
