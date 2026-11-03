@@ -18,8 +18,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from transcribe_anywhere.session.session import TRACKS, Session
+from transcribe_anywhere.session.session import Session
 from transcribe_anywhere.session.transcript import Segment, write_segments
+from transcribe_anywhere.transcription.crosstalk import open_tracks
 from transcribe_anywhere.transcription.engine import Cancelled
 from transcribe_anywhere.transcription.filters import collapse_repeats
 from transcribe_anywhere.transcription.job import Progress, transcribe_chunk
@@ -62,8 +63,8 @@ class LiveTranscriber:
         self.transcriber = transcriber
         self.vad = vad
         self.clock = clock
-        self.tracks = [TrackState(name, speaker, TrackAudio(lambda n=name: session.track_files(n)))
-                       for name, speaker in TRACKS.items()]
+        audio = open_tracks(session)
+        self.tracks = [TrackState(name, speaker, audio[name]) for name, speaker in session.tracks.items()]
         self.segments: list[Segment] = []
         self.speech_seconds = 0.0
         self.last_text = ""

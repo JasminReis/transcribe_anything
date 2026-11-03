@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from transcribe_anywhere.llm.ollama import Ollama
-from transcribe_anywhere.session.export import fmt_time
+from transcribe_anywhere.session.export import fmt_time, lines_with_times
 from transcribe_anywhere.session.transcript import Segment
 
 CHARS_PER_TOKEN = 3.0      # German text, conservative
@@ -42,7 +42,10 @@ Tabelle mit den Spalten Wer | Was | Bis wann. „–“ wenn nicht genannt. „K
 Stichpunkte. „Keine“, wenn es keine gab."""
 
 
-def transcript_lines(segments: list[Segment]) -> list[str]:
+def transcript_lines(segments: list[Segment], session=None) -> list[str]:
+    """With a session: wall-clock times and speaker names; without: times from the start."""
+    if session is not None:
+        return lines_with_times(session, segments)
     return [f"[{fmt_time(s.start)}] {s.speaker}: {s.text}" for s in segments]
 
 
@@ -69,12 +72,13 @@ def summarize(
     on_token: Callable[[str], None] = lambda t: None,
     on_status: Callable[[str, int, int], None] = lambda text, done, total: None,
     should_cancel: Callable[[], bool] = lambda: False,
+    session=None,
 ) -> str:
     budget = int((num_ctx - OUTPUT_RESERVE) * CHARS_PER_TOKEN)
-    lines = transcript_lines(segments)
+    lines = transcript_lines(segments, session)
     intro = (f"Hier ist das automatisch erstellte Transkript der Besprechung „{title}“. "
              "Es kann Erkennungsfehler enthalten. „Ich“ ist die Person, die aufgenommen hat; "
-             "„Andere“ sind die übrigen Teilnehmenden.")
+             "„Gast“, „Sprecher 1“, „Sprecher 2“ usw. (oder „Andere“) sind die übrigen Teilnehmenden.")
     parts = split_lines(lines, budget)
 
     if len(parts) <= 1:

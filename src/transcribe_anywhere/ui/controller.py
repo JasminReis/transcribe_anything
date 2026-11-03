@@ -15,6 +15,7 @@ from transcribe_anywhere.audio.capture import SessionRecorder
 from transcribe_anywhere.audio.devices import resolve_loopback, resolve_mic
 from transcribe_anywhere.config import SAMPLE_RATE, SEGMENT_SECONDS, Settings
 from transcribe_anywhere.session.session import Session
+from transcribe_anywhere.session.transcript import read_segments
 from transcribe_anywhere.transcription.engine import Cancelled, create_transcriber, resolve_engine
 from transcribe_anywhere.transcription.job import Progress, transcribe_session
 from transcribe_anywhere.transcription.live import LiveTranscriber
@@ -54,6 +55,9 @@ class TranscriptionWorker(QThread):
     def enqueue(self, folder: Path, engine: str | None = None) -> None:
         self._queue.put(("full", folder, engine, None))
 
+    def enqueue_speakers(self, folder: Path) -> None:
+        self._queue.put(("speakers", folder, None, None))
+
     def start_live(self, folder: Path) -> LiveControl:
         control = LiveControl()
         self._queue.put(("live", folder, None, control))
@@ -90,8 +94,15 @@ class TranscriptionWorker(QThread):
             self.busy = True
             if kind == "live":
                 session_id, status = self._run_live(folder, control)
+            elif kind == "speakers":
+                session_id, status = self._run_speakers(folder)
             else:
                 session_id, status = self._run_full(folder, engine)
+            if status == "done" and kind != "speakers" and self._wants_speakers(folder):
+                session = Session.load(folder)
+                session.speakers = "pending"
+                session.save()
+                self._queue.put(("speakers", folder, None, None))
             self.busy = not self._queue.empty()
             self.finished_session.emit(session_id, status)
             if self._cancel:
@@ -114,6 +125,44 @@ class TranscriptionWorker(QThread):
             session.status, session.error = "failed", str(exc)
         session.save()
         return session.id, session.status
+
+    def _wants_speakers(self, folder: Path) -> bool:
+        if not self.settings.speaker_detection or self._cancel:
+            return False
+        from transcribe_anywhere.transcription.speakers import is_other
+
+        session = Session.load(folder)
+        return any(is_other(s.speaker) for s in read_segments(session.transcript_path))
+
+    def _run_speakers(self, folder: Path) -> tuple[str, str]:
+        """Tell the other participants apart (runs after the transcript is finished)."""
+        from transcribe_anywhere.transcription import speakers
+
+        session = Session.load(folder)
+        last = {"pct": -1}
+
+        def progress(fraction: float) -> None:
+            pct = int(fraction * 100)
+            if pct != last["pct"]:
+                last["pct"] = pct
+                self.status.emit(f"Sprecher werden erkannt … {pct} %")
+
+        try:
+            found = speakers.assign_speakers(session, progress, self.status.emit,
+                                             should_cancel=lambda: self._cancel)
+            session = Session.load(folder)
+            session.speakers = "done"
+            self.status.emit(f"Sprecher erkannt: {found}" if found else "Bereit")
+        except speakers.Cancelled:
+            session = Session.load(folder)
+            session.speakers = "pending"          # picked up again at the next start
+        except Exception as exc:
+            log.exception("Speaker detection failed")
+            session = Session.load(folder)
+            session.speakers = "failed"
+            self.status.emit(f"Sprechererkennung fehlgeschlagen: {exc}")
+        session.save()
+        return session.id, "speakers"
 
     def _run_live(self, folder: Path, control: LiveControl) -> tuple[str, str]:
         session = Session.load(folder)
@@ -181,15 +230,29 @@ class Controller(QObject):
     def start_recording(self, title: str = "") -> bool:
         if self.recorder:
             return False
+        mode = self.settings.recording_mode if self.settings.recording_mode in ("online", "inperson") else "online"
         try:
-            sources = {
-                "mic": resolve_mic(self.settings.mic_device),
-                "system": resolve_loopback(self.settings.loopback_device),
-            }
+            if mode == "inperson":
+                if not self.settings.mic2_device:
+                    self.notify.emit("Zweites Mikrofon fehlt",
+                                     "Für „Vor Ort“ bitte unter Einstellungen → Aufnahme ein zweites Mikrofon wählen.")
+                    return False
+                first, second = resolve_mic(self.settings.mic_device), resolve_mic(self.settings.mic2_device)
+                if first.id == second.id:
+                    self.notify.emit("Zweimal dasselbe Mikrofon",
+                                     "Für „Vor Ort“ braucht jede Person ein eigenes Mikrofon "
+                                     "(Einstellungen → Aufnahme).")
+                    return False
+                sources = {"mic": first, "mic2": second}
+            else:
+                sources = {
+                    "mic": resolve_mic(self.settings.mic_device),
+                    "system": resolve_loopback(self.settings.loopback_device),
+                }
         except Exception as exc:
             self.notify.emit("Aufnahme nicht möglich", f"Audiogerät nicht gefunden: {exc}")
             return False
-        self.session = Session.create(self.settings.storage_path, title, self.settings.language)
+        self.session = Session.create(self.settings.storage_path, title, self.settings.language, mode)
         self.recorder = SessionRecorder(self.session.audio_dir, sources, SAMPLE_RATE, SEGMENT_SECONDS)
         self.recorder.start()
         self.live_progress = None
@@ -269,6 +332,48 @@ class Controller(QObject):
         self.worker.busy = True
         self.sessions_changed.emit()
         self._emit_state()
+
+    def detect_speakers(self, session: Session) -> None:
+        session.speakers = "pending"
+        session.save()
+        self.worker.enqueue_speakers(session.folder)
+        self.worker.busy = True
+        self.sessions_changed.emit()
+        self._emit_state()
+
+    def can_delete(self, session: Session) -> bool:
+        """Not while it is being recorded or a job may still write into it."""
+        if self.session and self.session.id == session.id:
+            return False
+        return not (self.worker.busy and (session.status in ("recorded", "transcribing")
+                                          or session.speakers == "pending"))
+
+    def delete_session(self, session: Session) -> bool:
+        """Move the session folder to the recycle bin (falls back to deleting)."""
+        import shutil
+
+        from PySide6.QtCore import QFile
+
+        if not self.can_delete(session):
+            return False
+        try:
+            ok = QFile.moveToTrash(str(session.folder))
+        except Exception:
+            ok = False
+        if not ok:
+            shutil.rmtree(session.folder, ignore_errors=True)
+        self.sessions_changed.emit()
+        return not session.folder.exists()
+
+    def rename_speaker(self, session: Session, label: str, name: str) -> None:
+        session = Session.load(session.folder)
+        name = name.strip()
+        if name and name != label:
+            session.speaker_names[label] = name
+        else:
+            session.speaker_names.pop(label, None)
+        session.save()
+        self.sessions_changed.emit()
 
     def _on_transcribed(self, session_id: str, status: str) -> None:
         if status == "done":

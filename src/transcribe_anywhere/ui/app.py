@@ -13,7 +13,8 @@ from transcribe_anywhere.ui.controller import Controller
 from transcribe_anywhere.ui.main_window import MainWindow
 from transcribe_anywhere.ui.pill import RecordingPill
 from transcribe_anywhere.ui.settings_dialog import SettingsDialog
-from transcribe_anywhere.ui.theme import state_icon
+from transcribe_anywhere.ui.theme import app_icon, state_icon
+from transcribe_anywhere.winshortcut import set_process_app_id
 
 TRAY_TIPS = {"idle": "Transcribe Anywhere – bereit", "recording": "Transcribe Anywhere – Aufnahme läuft",
              "transcribing": "Transcribe Anywhere – transkribiert …"}
@@ -57,6 +58,8 @@ class App:
         for s in list_sessions(settings.storage_path):
             if s.status == "recorded":
                 self.controller.transcribe(s)
+            elif s.status == "done" and s.speakers == "pending" and settings.speaker_detection:
+                self.controller.detect_speakers(s)      # was cut off when the app closed
         self.window.refresh_sessions()
         if recovered:
             self._notify("Unterbrochene Sitzung", f"{len(recovered)} Sitzung(en) wurden unterbrochen. "
@@ -87,8 +90,7 @@ class App:
         dialog = SettingsDialog(self.settings, self.window)
         if dialog.exec():
             dialog.apply()
-            self.window.refresh_sessions()
-            self.window.ai.refresh()
+            self.window.apply_settings()
 
     def show_window(self) -> None:
         self.window.show()
@@ -108,7 +110,6 @@ class App:
     def _on_state(self, state: str) -> None:
         self.tray.setIcon(state_icon(state))
         self.tray.setToolTip(TRAY_TIPS[state])
-        self.qapp.setWindowIcon(state_icon(state))
         self.record_action.setText("Aufnahme beenden" if state == "recording" else "Aufnahme starten")
         if state == "recording":
             self.pill.show_at_default_position()
@@ -127,10 +128,11 @@ class App:
 
 
 def run() -> int:
+    set_process_app_id()          # taskbar: our own app (and icon), not "Python"
     qapp = QApplication(sys.argv)
     qapp.setApplicationName(APP_NAME)
     qapp.setQuitOnLastWindowClosed(False)
-    qapp.setWindowIcon(state_icon("idle"))
+    qapp.setWindowIcon(app_icon())
 
     config_dir().mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(config_dir() / "instance.lock"))

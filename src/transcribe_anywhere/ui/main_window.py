@@ -5,20 +5,22 @@ from __future__ import annotations
 import html
 import time
 
-from PySide6.QtCore import QPropertyAnimation, QSequentialAnimationGroup, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QPropertyAnimation, QSequentialAnimationGroup, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
     QGraphicsOpacityEffect,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -28,13 +30,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from transcribe_anywhere.session.export import EXPORTERS, fmt_date, fmt_duration, fmt_time
+from transcribe_anywhere.llm.prompt import effective_prompt
+from transcribe_anywhere.session.export import (
+    EXPORTERS,
+    copy_plain,
+    copy_with_prompt,
+    copy_with_times,
+    fmt_date,
+    fmt_duration,
+)
 from transcribe_anywhere.session.session import Session
 from transcribe_anywhere.session.store import list_sessions
 from transcribe_anywhere.session.transcript import Segment, read_segments
 from transcribe_anywhere.ui.ai_panel import AiPanel
 from transcribe_anywhere.ui.progress_card import ProgressCard
-from transcribe_anywhere.ui.theme import SPEAKER_COLORS, STYLE
+from transcribe_anywhere.ui.settings_dialog import PromptDialog
+from transcribe_anywhere.ui.theme import SPEAKER_COLORS, STYLE, gear_icon
 
 STATUS_ICONS = {
     "recording": "🔴", "recorded": "⏳", "transcribing": "⏳",
@@ -42,20 +53,19 @@ STATUS_ICONS = {
 }
 
 
-# --------------------------------------------------------------------------- copy formats
-def copy_with_times(segments: list[Segment]) -> str:
-    return "\n".join(f"[{fmt_time(s.start)}] {s.speaker}: {s.text}" for s in segments) + "\n"
+# Colours for "Sprecher 1", "Sprecher 2" … (in order)
+OTHER_COLORS = ["#16a34a", "#db2777", "#0891b2", "#ca8a04", "#9333ea", "#ea580c", "#4f46e5", "#0d9488"]
 
 
-def copy_plain(segments: list[Segment]) -> str:
-    """Speaker turns as paragraphs – best for pasting into mails, docs or chat tools."""
-    turns: list[tuple[str, list[str]]] = []
-    for s in segments:
-        if turns and turns[-1][0] == s.speaker:
-            turns[-1][1].append(s.text)
-        else:
-            turns.append((s.speaker, [s.text]))
-    return "\n\n".join(f"{who}: {' '.join(texts)}" for who, texts in turns) + "\n"
+def speaker_color(label: str) -> str:
+    if label in SPEAKER_COLORS:
+        return SPEAKER_COLORS[label]
+    if label.startswith("Sprecher "):
+        try:
+            return OTHER_COLORS[(int(label.split()[1]) - 1) % len(OTHER_COLORS)]
+        except ValueError:
+            pass
+    return "#7c3aed"
 
 
 class Toast(QLabel):
@@ -105,13 +115,29 @@ class MainWindow(QMainWindow):
         self.record_button = QPushButton("●  Aufnahme starten", objectName="recordButton")
         self.record_button.setCursor(Qt.PointingHandCursor)
         self.record_button.clicked.connect(self.record_toggled)
+        self.mode_box = QComboBox(objectName="modeBox")
+        self.mode_box.addItem("💻  Online-Meeting", "online")
+        self.mode_box.addItem("🤝  Vor Ort · 2 Mikrofone", "inperson")
+        self.mode_box.setToolTip("Online: dein Mikrofon + Ton des Meetings (Teams, Zoom …)\n"
+                                 "Vor Ort: zwei Mikrofone, eins pro Person (z. B. Interview, Kundentermin)")
+        self.mode_box.setCursor(Qt.PointingHandCursor)
+        self._sync_mode()
+        self.mode_box.currentIndexChanged.connect(self._mode_changed)
         self.title_edit = QLineEdit(placeholderText="Meeting-Titel (optional)")
         self.title_edit.setMinimumWidth(280)
         self.status_label = QLabel("Bereit")
         self.status_label.setStyleSheet("color: #64748b;")
-        settings_btn = QPushButton("⚙  Einstellungen", clicked=self.settings_requested)
+        # (connect via lambda: PySide6 6.11 ignores a signal passed as clicked=…)
+        settings_btn = QPushButton(" Einstellungen", objectName="settingsButton")
+        settings_btn.setIcon(gear_icon())
+        settings_btn.setIconSize(QSize(18, 18))
+        settings_btn.setCursor(Qt.PointingHandCursor)
+        settings_btn.setToolTip("Mikrofon, Spracherkennung, KI und mehr  (Strg+,)")
+        settings_btn.clicked.connect(lambda: self.settings_requested.emit())
+        QShortcut(QKeySequence("Ctrl+,"), self, activated=lambda: self.settings_requested.emit())
         top = QHBoxLayout()
         top.addWidget(self.record_button)
+        top.addWidget(self.mode_box)
         top.addWidget(self.title_edit)
         top.addWidget(self.status_label, 1)
         top.addWidget(settings_btn)
@@ -119,6 +145,9 @@ class MainWindow(QMainWindow):
         # --- left: session library
         self.list = QListWidget()
         self.list.currentItemChanged.connect(lambda *_: self._show_selected())
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
+        QShortcut(QKeySequence.Delete, self.list, activated=self._delete)
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
@@ -141,6 +170,9 @@ class MainWindow(QMainWindow):
         copy_menu.addAction("Mit Zeitstempeln und Sprechern", lambda: self._copy("times"))
         copy_menu.addAction("Nur Text (nach Sprechern)", lambda: self._copy("plain"))
         copy_menu.addAction("Als Markdown", lambda: self._copy("md"))
+        copy_menu.addSeparator()
+        copy_menu.addAction("✨ Mit KI-Prompt (zum Einfügen in ChatGPT, Claude …)", lambda: self._copy("prompt"))
+        copy_menu.addAction("Prompt bearbeiten …", self._edit_prompt)
         self.copy_btn.setMenu(copy_menu)
 
         self.export_btn = QToolButton(text="Export ▾", popupMode=QToolButton.InstantPopup)
@@ -154,28 +186,37 @@ class MainWindow(QMainWindow):
         rmenu = QMenu(self.retranscribe_btn)
         rmenu.addAction("Mit Whisper (genauer, auf CPU langsam)", lambda: self._retranscribe("whisper"))
         rmenu.addAction("Mit Parakeet (schnell)", lambda: self._retranscribe("parakeet"))
+        rmenu.addSeparator()
+        self.speakers_action = rmenu.addAction("Nur Sprecher neu erkennen", self._detect_speakers)
         self.retranscribe_btn.setMenu(rmenu)
+        self.delete_btn = QPushButton("🗑  Löschen", clicked=self._delete)
+        self.delete_btn.setToolTip("Aufnahme und Transkript in den Papierkorb verschieben (Entf)")
         self.version_box = QComboBox()
         self.version_box.addItem("Original", "original")
         self.version_box.addItem("✨ KI-korrigiert", "corrected")
         self.version_box.setMinimumWidth(150)
         self.version_box.currentIndexChanged.connect(lambda *_: self._render_current())
         actions = QHBoxLayout()
-        for w in (self.copy_btn, self.export_btn, self.folder_btn, self.retranscribe_btn):
+        for w in (self.copy_btn, self.export_btn, self.folder_btn, self.retranscribe_btn, self.delete_btn):
             actions.addWidget(w)
         actions.addStretch(1)
         actions.addWidget(self.version_box)
 
         self.progress_card = ProgressCard()
         self.progress_card.hide()
-        self.view = QTextBrowser(openExternalLinks=False)
+        self.view = QTextBrowser(openExternalLinks=False, openLinks=False)
         self.view.setStyleSheet("QTextBrowser { font-size: 14px; padding: 8px; }")
+        self.view.anchorClicked.connect(self._on_anchor)
+        self.speaker_hint = QLabel("Tipp: Auf einen Sprecher klicken, um einen Namen einzutragen.")
+        self.speaker_hint.setStyleSheet("color:#94a3b8; font-size: 12px;")
+        self.speaker_hint.hide()
 
         transcript_tab = QWidget()
         tv = QVBoxLayout(transcript_tab)
         tv.setContentsMargins(0, 8, 0, 0)
         tv.addLayout(actions)
         tv.addWidget(self.progress_card)
+        tv.addWidget(self.speaker_hint)
         tv.addWidget(self.view, 1)
 
         # --- tab 2: AI
@@ -185,6 +226,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget(documentMode=True)
         self.tabs.addTab(transcript_tab, "Transkript")
         self.tabs.addTab(self.ai, "✨ KI-Auswertung")
+        self.tabs.setTabVisible(1, self.ai.any_enabled)
 
         right = QWidget()
         rv = QVBoxLayout(right)
@@ -213,6 +255,30 @@ class MainWindow(QMainWindow):
         self.refresh_sessions()
         self.set_state(controller.state)
 
+    def _sync_mode(self) -> None:
+        self.mode_box.blockSignals(True)
+        self.mode_box.setCurrentIndex(max(self.mode_box.findData(self.controller.settings.recording_mode), 0))
+        self.mode_box.blockSignals(False)
+
+    def _mode_changed(self) -> None:
+        settings = self.controller.settings
+        settings.recording_mode = self.mode_box.currentData()
+        settings.save()
+        if settings.recording_mode == "inperson" and not settings.mic2_device:
+            self.toast("Vor Ort: Bitte noch das zweite Mikrofon wählen")
+            self.settings_requested.emit()          # opens on the "Aufnahme" page
+        elif settings.recording_mode == "inperson":
+            self.toast("Vor Ort: zwei Mikrofone – „Ich“ und „Gast“")
+        else:
+            self.toast("Online-Meeting: Mikrofon + Ton des Meetings")
+
+    def apply_settings(self) -> None:
+        """Called after the settings dialog was saved."""
+        self._sync_mode()
+        self.ai.refresh()
+        self.tabs.setTabVisible(1, self.ai.any_enabled)
+        self.refresh_sessions()
+
     def toast(self, text: str) -> None:
         self._toast.show_message(text)
 
@@ -224,6 +290,7 @@ class MainWindow(QMainWindow):
         self.record_button.style().unpolish(self.record_button)
         self.record_button.style().polish(self.record_button)
         self.title_edit.setEnabled(not recording)
+        self.mode_box.setEnabled(not recording)
         if recording:
             self.status_label.setText("Aufnahme läuft …")
         elif state == "idle":
@@ -263,11 +330,15 @@ class MainWindow(QMainWindow):
             meta += f" · {fmt_duration(s.speech_seconds)} Sprache"
         if s.model:
             meta += f" · {s.model}"
+        if s.speakers == "pending":
+            meta += " · Sprecher werden erkannt …"
+        elif s.speakers == "failed":
+            meta += " · Sprechererkennung fehlgeschlagen"
         return meta
 
     def _show_selected(self) -> None:
         s = self._current()
-        for w in (self.copy_btn, self.export_btn, self.folder_btn, self.retranscribe_btn):
+        for w in (self.copy_btn, self.export_btn, self.folder_btn, self.retranscribe_btn, self.delete_btn):
             w.setEnabled(s is not None)
         self.ai.set_session(s)
         if not s:
@@ -281,6 +352,8 @@ class MainWindow(QMainWindow):
         self.session_meta.setText(self._meta(s))
         busy = s.status in ("recording", "recorded", "transcribing")
         self.retranscribe_btn.setEnabled(not busy)
+        self.delete_btn.setEnabled(self.controller.can_delete(s))
+        self.speakers_action.setEnabled(s.status == "done" and s.speakers != "pending")
         self.copy_btn.setEnabled(s.transcript_path.exists())
         has_corrected = s.corrected_path.exists()
         self.version_box.setVisible(has_corrected)
@@ -324,14 +397,20 @@ class MainWindow(QMainWindow):
         items = [(seg.start, seg.speaker, seg.text) for seg in segments]
         items += [(t, "⚑", "Marker") for t in s.markers]
         for start, speaker, text in sorted(items, key=lambda i: i[0]):
-            color = SPEAKER_COLORS.get(speaker, "#7c3aed")
+            color = speaker_color(speaker)
+            name = html.escape(s.speaker_name(speaker))
+            if speaker != "⚑":       # click a speaker to give them a name
+                name = (f"<a href='speaker:{html.escape(speaker)}' style='color:{color}; "
+                        f"text-decoration:none'>{name}</a>")
             rows.append(
                 "<tr>"
-                f"<td style='color:#94a3b8; padding-right:12px; white-space:nowrap'>{fmt_time(start)}</td>"
+                f"<td style='color:#94a3b8; padding-right:12px; white-space:nowrap'>{s.clock(start)}</td>"
                 f"<td style='color:{color}; font-weight:600; padding-right:12px; white-space:nowrap'>"
-                f"{html.escape(speaker)}</td>"
+                f"{name}</td>"
                 f"<td>{html.escape(text)}</td></tr>"
             )
+        self.speaker_hint.setVisible(any(seg.speaker.startswith("Sprecher ") for seg in segments)
+                                     and not s.speaker_names)
         bar = self.view.verticalScrollBar()
         follow = s.status in ("recording", "transcribing") and bar.value() >= bar.maximum() - 4
         pos = bar.value()
@@ -367,13 +446,24 @@ class MainWindow(QMainWindow):
             return
         segments = self._segments_for(s)
         if fmt == "times":
-            text = copy_with_times(segments)
+            text = copy_with_times(s, segments)
         elif fmt == "plain":
-            text = copy_plain(segments)
+            text = copy_plain(s, segments)
+        elif fmt == "prompt":
+            text = copy_with_prompt(effective_prompt(self.controller.settings.summary_prompt), s, segments)
         else:
             text = EXPORTERS["md"](s, segments)
         QApplication.clipboard().setText(text)
-        self.toast(f"Transkript kopiert ✓  ({len(segments)} Abschnitte)")
+        if fmt == "prompt":
+            self.toast("Prompt + Transkript kopiert ✓  – jetzt in ChatGPT, Claude o. Ä. einfügen")
+        else:
+            self.toast(f"Transkript kopiert ✓  ({len(segments)} Abschnitte)")
+
+    def _edit_prompt(self) -> None:
+        dialog = PromptDialog(self.controller.settings, self)
+        if dialog.exec():
+            dialog.apply()
+            self.toast("Prompt gespeichert ✓")
 
     def _export(self, ext: str) -> None:
         s = self._current()
@@ -394,6 +484,59 @@ class MainWindow(QMainWindow):
         s = self._current()
         if s:
             self.controller.transcribe(s, engine)
+
+    def _detect_speakers(self) -> None:
+        s = self._current()
+        if s:
+            self.controller.detect_speakers(s)
+
+    def _on_anchor(self, url: QUrl) -> None:
+        text = url.toString()
+        if not text.startswith("speaker:"):
+            return
+        label = text[len("speaker:"):]
+        s = self._current()
+        if not s:
+            return
+        name, ok = QInputDialog.getText(self, "Sprecher benennen",
+                                        f"Name für „{label}“ (leer lassen = „{label}“):",
+                                        text=s.speaker_names.get(label, ""))
+        if ok:
+            self.controller.rename_speaker(s, label, name)
+
+    def _list_menu(self, pos) -> None:
+        item = self.list.itemAt(pos)
+        if not item:
+            return
+        self.list.setCurrentItem(item)
+        menu = QMenu(self)
+        delete = menu.addAction("🗑  Löschen", self._delete)
+        s = self._current()
+        delete.setEnabled(bool(s and self.controller.can_delete(s)))
+        menu.addAction("Ordner öffnen", self._open_folder)
+        menu.exec(self.list.mapToGlobal(pos))
+
+    def _delete(self) -> None:
+        s = self._current()
+        if not s:
+            return
+        if not self.controller.can_delete(s):
+            self.toast("Läuft gerade – bitte warten, bis Aufnahme bzw. Transkription fertig ist.")
+            return
+        box = QMessageBox(QMessageBox.Warning, "Sitzung löschen",
+                          f"„{s.title}“ ({fmt_date(s.started_at)}) löschen?\n\n"
+                          "Audio, Transkript und Zusammenfassung werden in den Papierkorb verschoben.", parent=self)
+        yes = box.addButton("Löschen", QMessageBox.DestructiveRole)
+        box.addButton("Abbrechen", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not yes:
+            return
+        row = self.list.currentRow()
+        if self.controller.delete_session(s):
+            self.list.setCurrentRow(min(row, self.list.count() - 1))
+            self.toast("Sitzung gelöscht ✓  (im Papierkorb)")
+        else:
+            self.toast("Konnte nicht gelöscht werden – ist eine Datei noch geöffnet?")
 
     def select_session(self, session_id: str) -> None:
         for i in range(self.list.count()):

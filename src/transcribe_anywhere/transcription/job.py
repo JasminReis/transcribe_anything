@@ -10,14 +10,14 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
-from transcribe_anywhere.session.session import TRACKS, Session
+from transcribe_anywhere.session.session import Session
 from transcribe_anywhere.session.transcript import Segment, write_segments
+from transcribe_anywhere.transcription.crosstalk import open_tracks
 from transcribe_anywhere.transcription.engine import Cancelled, Transcriber
 from transcribe_anywhere.transcription.filters import collapse_repeats
 from transcribe_anywhere.transcription.segmenter import (
     SR,
     Chunk,
-    TrackAudio,
     detect_speech,
     plan_chunks,
 )
@@ -66,7 +66,7 @@ def transcribe_session(
     on_progress: Callable[[Progress], None] = lambda p: None,
     should_cancel: Callable[[], bool] = lambda: False,
 ) -> list[Segment]:
-    tracks = {name: TrackAudio(session.track_files(name)) for name in TRACKS}
+    tracks = open_tracks(session)
     total_samples = sum(t.total_samples for t in tracks.values())
     p = Progress("analyse", audio_seconds=total_samples / SR)
     on_progress(p)
@@ -100,7 +100,7 @@ def transcribe_session(
     for chunk, name in work:
         if should_cancel():
             raise Cancelled()
-        for seg in transcribe_chunk(chunk, tracks[name], transcriber, TRACKS[name], should_cancel):
+        for seg in transcribe_chunk(chunk, tracks[name], transcriber, session.tracks[name], should_cancel):
             segments.append(seg)
             p.last_text = seg.text
             p.elapsed = time.monotonic() - t0

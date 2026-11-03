@@ -17,6 +17,19 @@ import time
 from pathlib import Path
 
 
+def _cmd_shortcuts(args) -> int:
+    from transcribe_anywhere import winshortcut
+
+    if args.remove:
+        winshortcut.remove_shortcuts()
+        print("Verknüpfungen entfernt.")
+        return 0
+    for path in winshortcut.create_shortcuts():
+        print("angelegt:", path)
+    print("Tipp: Rechtsklick auf die Verknüpfung → „An Taskleiste anheften“.")
+    return 0
+
+
 def _cmd_devices(_args) -> int:
     from transcribe_anywhere.audio.devices import list_inputs, resolve_loopback, resolve_mic
 
@@ -132,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="transcribe-anywhere", description="Lokale Meeting-Transkription")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("devices", help="Audiogeräte auflisten")
+    sc = sub.add_parser("shortcuts", help="Verknüpfungen (Desktop, Startmenü) mit Symbol anlegen")
+    sc.add_argument("--remove", action="store_true", help="Verknüpfungen entfernen")
     setup = sub.add_parser("setup", help="Ersteinrichtung: Geräte prüfen, Modelle laden")
     setup.add_argument("--whisper", action="store_true", help="auch Whisper laden (sonst nur mit NVIDIA-GPU)")
     rec = sub.add_parser("record", help="Aufnahme ohne Oberfläche")
@@ -150,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--no-vad", action="store_true", help="Stille nicht entfernen (nur zum Vergleich)")
     args = parser.parse_args(argv)
 
-    commands = {"devices": _cmd_devices, "setup": _cmd_setup, "record": _cmd_record,
+    commands = {"devices": _cmd_devices, "shortcuts": _cmd_shortcuts, "setup": _cmd_setup, "record": _cmd_record,
                 "transcribe": _cmd_transcribe, "transcribe-session": _cmd_transcribe_session}
     if args.cmd:
         return commands[args.cmd](args)

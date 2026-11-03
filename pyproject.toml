@@ -16,6 +16,10 @@ dependencies = [
     "onnx-asr>=0.12,<0.13",       # Parakeet v3 via onnxruntime (young API → pinned minor)
     "numpy>=1.26",
     "platformdirs>=4.0",
+    "sherpa-onnx>=2.0,<3",        # offline speaker detection ("Sprecher 1", "Sprecher 2" …)
+    "anthropic>=2.4,<3",          # optional cloud summary with Claude
+    "openai>=3.40,<4",            # optional cloud summary with OpenAI
+    "keyring>=25",                # API keys in the OS password store
 ]
 
 [project.optional-dependencies]

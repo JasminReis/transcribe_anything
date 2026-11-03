@@ -54,20 +54,13 @@ try {
     if ($LASTEXITCODE -ne 0) { Fail "Modell konnte nicht geladen werden. Internetverbindung prüfen und erneut starten." }
 
     Step "Verknüpfungen anlegen (Desktop und Startmenü)"
-    $exe = Join-Path $App ".venv\Scripts\transcribe-anywhere.exe"
-    $shell = New-Object -ComObject WScript.Shell
-    $places = @([Environment]::GetFolderPath("Desktop"),
-                (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))
-    foreach ($dir in $places) {
-        $link = $shell.CreateShortcut((Join-Path $dir "Transcribe Anywhere.lnk"))
-        $link.TargetPath = $exe
-        $link.WorkingDirectory = $App
-        $link.Description = "Meetings lokal transkribieren"
-        $link.Save()
-    }
+    # With app icon and app ID, so it can be pinned to the taskbar as its own app.
+    & (Join-Path $App ".venv\Scripts\transcribe-anywhere-cli.exe") shortcuts
+    if ($LASTEXITCODE -ne 0) { Write-Host "Verknüpfungen konnten nicht angelegt werden (Programm läuft trotzdem)." -ForegroundColor Yellow }
 
     Step "Fertig!"
     Write-Host "Starte 'Transcribe Anywhere' über das Symbol auf dem Desktop." -ForegroundColor Green
+    Write-Host "Für die Taskleiste: Rechtsklick auf das Symbol -> 'An Taskleiste anheften'." -ForegroundColor Green
 } catch {
     Fail $_.Exception.Message
 }

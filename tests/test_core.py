@@ -46,8 +46,12 @@ def test_transcript_and_export(tmp_path):
     write_segments(s.transcript_path, segs)
     assert read_segments(s.transcript_path) == segs
     assert fmt_time(3725.5) == "01:02:05"
-    assert "[01:02:05] Ich: Guten Morgen" in to_txt(s, segs)
-    assert "01:02:05,500 --> 01:02:08,000" in to_srt(s, segs)
+    s.started_at = "2026-11-03T09:30:00"
+    assert s.clock(3725.5) == "10:32:05"                      # wall-clock time, not time since start
+    assert "[10:32:05] Ich: Guten Morgen" in to_txt(s, segs)
+    s.speaker_names = {"Andere": "Anna"}
+    assert "[09:30:01] Anna: Hallo" in to_txt(s, segs)
+    assert "01:02:05,500 --> 01:02:08,000" in to_srt(s, segs)  # subtitles stay relative
 
 
 def test_settings_ignore_unknown_keys(tmp_path):
@@ -65,8 +69,6 @@ def test_muted_track_records_silence_and_keeps_timeline(tmp_path):
         """Fake device that always delivers a loud tone."""
 
         def recorder(self, samplerate, blocksize):
-            src = self
-
             class Rec:
                 def __enter__(self):
                     return self
@@ -97,5 +99,52 @@ def test_muted_track_records_silence_and_keeps_timeline(tmp_path):
     mic, system = samples("mic"), samples("system")
     assert len(mic) == len(system)                       # muting keeps both tracks in sync
     assert (mic == 0).sum() >= 300                       # ~0.4 s of silence while muted
-    assert mic[:200].min() > 0 and mic[-100:].min() > 0  # sound before and after
-    assert (system == 0).sum() == 0
+    # sound before and after muting (the last ~0.2 s may be padding added by stop())
+    assert mic[:200].min() > 0 and mic[-300:-200].min() > 0
+    assert (system[:-200] == 0).sum() == 0
+
+
+def test_crosstalk_gate_keeps_own_voice_and_mutes_the_other():
+    from transcribe_anywhere.transcription.crosstalk import gate
+
+    sr = 16000
+    t = np.arange(sr) / sr
+    voice_a = (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)      # person A, 1 s
+    voice_b = (0.5 * np.sin(2 * np.pi * 330 * t)).astype(np.float32)      # person B, 1 s
+    silence = np.zeros(sr // 2, np.float32)
+    bleed = 10 ** (-12 / 20)                                             # the far mic hears -12 dB
+    mic_a = np.concatenate([voice_a, silence, voice_b * bleed])
+    mic_b = np.concatenate([voice_a * bleed, silence, voice_b])
+    out = gate(mic_a, mic_b)
+    rms = lambda x: float(np.sqrt(np.mean(x ** 2)))
+    assert rms(out[2000:sr - 2000]) > 0.3                     # A's own speech stays
+    assert rms(out[-sr + 6000:-2000]) < 0.01                  # B's voice on A's mic is muted
+    assert len(out) == len(mic_a)
+
+
+def test_inperson_sessions_label_two_people(tmp_path):
+    s = Session.create(tmp_path, "Interview", mode="inperson")
+    assert Session.load(s.folder).tracks == {"mic": "Ich", "mic2": "Gast"}
+    assert Session.create(tmp_path, "Call").tracks == {"mic": "Ich", "system": "Andere"}
+
+
+def test_inperson_recording_needs_a_second_different_microphone(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    from transcribe_anywhere.ui import controller as ctl
+
+    QApplication.instance() or QApplication([])
+    mic = type("Mic", (), {"id": "same"})()
+    monkeypatch.setattr(ctl, "resolve_mic", lambda device_id="": mic)
+    settings = Settings(storage_dir=str(tmp_path), recording_mode="inperson")
+    settings.save = lambda *a, **k: None
+    c = ctl.Controller(settings)
+    messages = []
+    c.notify.connect(lambda title, msg: messages.append(title))
+    try:
+        assert not c.start_recording()                     # no second microphone chosen
+        settings.mic2_device = "same"
+        assert not c.start_recording()                     # the same microphone twice
+        assert messages == ["Zweites Mikrofon fehlt", "Zweimal dasselbe Mikrofon"]
+    finally:
+        c.worker.shutdown()

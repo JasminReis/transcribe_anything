@@ -34,12 +34,19 @@ class Settings:
     live: bool = True               # transcribe while recording
     model: str = "auto"             # Whisper model: "auto" | "large-v3-turbo" | "large-v3" | "small"
     compute_device: str = "auto"    # "auto" | "cpu" | "cuda"
+    recording_mode: str = "online"  # "online" (mic + system audio) | "inperson" (two microphones)
     mic_device: str = ""            # "" = OS default microphone
+    mic2_device: str = ""           # second microphone for in-person meetings (must be chosen)
     loopback_device: str = ""       # "" = system audio of the OS default speaker
     storage_dir: str = ""           # "" = default_storage_dir()
     hotwords: str = ""              # names / jargon that should be recognised
+    speaker_detection: bool = True  # tell the other participants apart ("Sprecher 1", "Sprecher 2" …)
+    summary_prompt: str = ""        # "" = DEFAULT_PROMPT; used for "copy with prompt" and cloud AI
+    local_ai: bool = False          # show the local AI (Ollama) section
     ollama_url: str = "http://localhost:11434"
     llm_model: str = ""             # "" = recommended model for this hardware
+    cloud_provider: str = ""        # "" (off) | "claude" | "openai"; the API key lives in the OS keyring
+    cloud_model: str = ""           # "" = provider default
     consent_reminder: bool = True
     start_minimized: bool = False
 

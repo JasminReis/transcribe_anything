@@ -1,4 +1,4 @@
-"""'KI-Auswertung' tab: hardware check, Ollama model, summary and correction."""
+"""'KI-Auswertung' tab: summary with Claude/OpenAI (optional) or a local Ollama model (optional)."""
 
 from __future__ import annotations
 
@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from transcribe_anywhere.config import Settings
-from transcribe_anywhere.llm import hardware, tasks
+from transcribe_anywhere.llm import cloud, hardware, tasks
 from transcribe_anywhere.llm.ollama import Cancelled, Ollama, find_installed
+from transcribe_anywhere.llm.prompt import effective_prompt
+from transcribe_anywhere.session.export import transcript_block
 from transcribe_anywhere.session.session import Session
 from transcribe_anywhere.session.transcript import read_segments, write_segments
 
@@ -51,7 +53,7 @@ class LlmJob(QThread):
     def run(self) -> None:
         try:
             self.done.emit(True, self.fn(self), "")
-        except Cancelled:
+        except (Cancelled, cloud.Cancelled):
             self.done.emit(False, None, "Abgebrochen.")
         except Exception as exc:
             self.done.emit(False, None, str(exc))
@@ -66,13 +68,67 @@ class AiPanel(QWidget):
         self.session: Session | None = None
         self.job: LlmJob | None = None
         self._buffer = ""
-        hw, self.advice = hardware_advice()
+        self._cloud_confirmed = False
+        self.advice: hardware.Advice | None = None     # only computed when local AI is on
 
-        # --- hardware card
+        # --- cloud AI (Claude / OpenAI)
+        self.cloud_btn = QPushButton(objectName="primary", clicked=self._summarize_cloud)
+        self.cloud_label = QLabel(wordWrap=True)
+        self.cloud_box = QWidget()
+        cloud_row = QHBoxLayout(self.cloud_box)
+        cloud_row.setContentsMargins(0, 0, 0, 0)
+        cloud_row.addWidget(self.cloud_btn)
+        cloud_row.addWidget(self.cloud_label, 1)
+
+        # --- local AI (built when switched on)
+        self.local_box = QWidget()
+        self._local_layout = QVBoxLayout(self.local_box)
+        self._local_layout.setContentsMargins(0, 6, 0, 0)
+        self._local_built = False
+
+        # --- shared: cancel, copy, status, output
+        self.cancel_btn = QPushButton("Abbrechen", clicked=self._cancel)
+        self.cancel_btn.hide()
+        self.copy_btn = QPushButton("⧉  Zusammenfassung kopieren", clicked=self._copy)
+        self.estimate = QLabel()
+        self.estimate.setStyleSheet("color:#64748b;")
+        shared = QHBoxLayout()
+        shared.addWidget(self.cancel_btn)
+        shared.addWidget(self.estimate, 1)
+        shared.addWidget(self.copy_btn)
+
+        self.status = QLabel()
+        self.status.setStyleSheet("color:#64748b;")
+        self.bar = QProgressBar(objectName="thin", textVisible=False)
+        self.bar.hide()
+
+        self.output = QTextBrowser(openExternalLinks=True)
+        self.output.setStyleSheet("QTextBrowser { font-size: 14px; padding: 10px; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.addWidget(self.cloud_box)
+        layout.addWidget(self.local_box)
+        layout.addSpacing(4)
+        layout.addLayout(shared)
+        layout.addWidget(self.status)
+        layout.addWidget(self.bar)
+        layout.addWidget(self.output, 1)
+
+        self._render_timer = QTimer(self, interval=120, timeout=self._render_stream)
+        self.refresh()
+
+    @property
+    def any_enabled(self) -> bool:
+        return bool(self.settings.cloud_provider) or self.settings.local_ai
+
+    def _build_local(self) -> None:
+        """Hardware card, Ollama model and local buttons (only when local AI is switched on)."""
+        hw, self.advice = hardware_advice()
         badge = QLabel(self.advice.headline)
         badge.setStyleSheet(f"background:{LEVEL_COLORS[self.advice.level]}; color:white; border-radius:9px;"
                             " padding:2px 10px; font-weight:600;")
-        hw_text = QLabel(f"<b>Deine Hardware</b><br>{hw.cpu} · {hw.ram_gb:.0f} GB RAM"
+        hw_text = QLabel(f"<b>Lokale KI · deine Hardware</b><br>{hw.cpu} · {hw.ram_gb:.0f} GB RAM"
                          + (f" · {hw.gpu}" if hw.gpu else "") + f"<br><span style='color:#64748b'>"
                          f"{self.advice.detail}</span>")
         hw_text.setWordWrap(True)
@@ -80,7 +136,6 @@ class AiPanel(QWidget):
         hw_row.addWidget(hw_text, 1)
         hw_row.addWidget(badge, 0, Qt.AlignTop)
 
-        # --- Ollama row
         self.ollama_status = QLabel()
         self.ollama_status.setOpenExternalLinks(True)
         self.model_box = QComboBox()
@@ -96,46 +151,41 @@ class AiPanel(QWidget):
         model_row.addWidget(self.pull_btn)
         model_row.addWidget(refresh)
 
-        # --- actions
-        self.summary_btn = QPushButton("✨  Zusammenfassen", objectName="primary", clicked=self._summarize)
+        self.summary_btn = QPushButton("✨  Lokal zusammenfassen", clicked=self._summarize)
         self.correct_btn = QPushButton("✎  Transkript korrigieren", clicked=self._correct)
-        self.cancel_btn = QPushButton("Abbrechen", clicked=self._cancel)
-        self.cancel_btn.hide()
-        self.copy_btn = QPushButton("⧉  Kopieren", clicked=self._copy)
-        self.estimate = QLabel()
-        self.estimate.setStyleSheet("color:#64748b;")
         actions = QHBoxLayout()
-        for w in (self.summary_btn, self.correct_btn, self.cancel_btn):
-            actions.addWidget(w)
-        actions.addWidget(self.estimate, 1)
-        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.summary_btn)
+        actions.addWidget(self.correct_btn)
+        actions.addStretch(1)
 
-        self.status = QLabel()
-        self.status.setStyleSheet("color:#64748b;")
-        self.bar = QProgressBar(objectName="thin", textVisible=False)
-        self.bar.hide()
-
-        self.output = QTextBrowser(openExternalLinks=True)
-        self.output.setStyleSheet("QTextBrowser { font-size: 14px; padding: 10px; }")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.addLayout(hw_row)
-        layout.addLayout(model_row)
-        layout.addSpacing(4)
-        layout.addLayout(actions)
-        layout.addWidget(self.status)
-        layout.addWidget(self.bar)
-        layout.addWidget(self.output, 1)
-
-        self._render_timer = QTimer(self, interval=120, timeout=self._render_stream)
-        self.refresh()
+        self._local_layout.addLayout(hw_row)
+        self._local_layout.addLayout(model_row)
+        self._local_layout.addLayout(actions)
+        self._local_built = True
 
     # --- state -------------------------------------------------------------------
     def client(self) -> Ollama:
         return Ollama(self.settings.ollama_url)
 
     def refresh(self) -> None:
+        provider = self.settings.cloud_provider
+        self.cloud_box.setVisible(bool(provider))
+        if provider:
+            name = "Claude" if provider == "claude" else "OpenAI"
+            model = self.settings.cloud_model or cloud.default_model(provider) or "neuestes Modell"
+            self.cloud_btn.setText(f"✨  Mit {name} zusammenfassen")
+            note = ("das Transkript wird dafür an den Anbieter gesendet" if cloud.get_key(provider) else
+                    "<span style='color:#dc2626'>kein API-Schlüssel – Einstellungen → KI</span>")
+            self.cloud_label.setText(f"<span style='color:#64748b'>{cloud.PROVIDERS[provider]} · {model} · "
+                                     f"{note}</span>")
+        self.local_box.setVisible(self.settings.local_ai)
+        if self.settings.local_ai:
+            if not self._local_built:
+                self._build_local()
+            self._refresh_local()
+        self._update_enabled()
+
+    def _refresh_local(self) -> None:
         client = self.client()
         version = client.version()
         self.model_box.blockSignals(True)
@@ -164,7 +214,6 @@ class AiPanel(QWidget):
             self.ollama_status.setText(f"<span style='color:#16a34a'>●</span> Ollama {version} · "
                                        f"{len(names)} Modelle")
         self.model_box.blockSignals(False)
-        self._update_enabled()
 
     def _model_chosen(self) -> None:
         self.settings.llm_model = self.model_box.currentData() or ""
@@ -194,18 +243,22 @@ class AiPanel(QWidget):
 
     def _update_enabled(self) -> None:
         running = self.job is not None
-        ready = (self.session is not None and self.session.status == "done"
-                 and self.model_box.count() > 0 and self.model_box.isEnabled())
-        self.summary_btn.setEnabled(ready and not running)
-        self.correct_btn.setEnabled(ready and not running)
+        done = self.session is not None and self.session.status == "done"
+        provider = self.settings.cloud_provider
+        self.cloud_btn.setEnabled(bool(provider) and done and not running and bool(cloud.get_key(provider)))
+        local = self.settings.local_ai and self._local_built
+        if self._local_built:
+            ready = local and done and self.model_box.count() > 0 and self.model_box.isEnabled()
+            self.summary_btn.setEnabled(ready and not running)
+            self.correct_btn.setEnabled(ready and not running)
         self.cancel_btn.setVisible(running)
         self.copy_btn.setEnabled(bool(self.output.toPlainText().strip()))
-        chars = sum(len(s.text) for s in self._segments()) if ready else 0
-        if ready and self.advice.level in ("slow", "no") and chars:
-            self.estimate.setText(f"grobe Schätzung auf diesem Gerät: Zusammenfassung ~{_mins(chars / CPU_SUMMARY_CPS)},"
-                                  f" Korrektur ~{_mins(chars / CPU_CORRECT_CPS)}")
-        elif self.session and self.session.status != "done":
+        chars = sum(len(s.text) for s in self._segments()) if (local and done) else 0
+        if self.session and self.session.status != "done":
             self.estimate.setText("Verfügbar, sobald das Transkript fertig ist.")
+        elif chars and self.advice.level in ("slow", "no"):
+            self.estimate.setText(f"Lokal, grobe Schätzung: Zusammenfassung ~{_mins(chars / CPU_SUMMARY_CPS)},"
+                                  f" Korrektur ~{_mins(chars / CPU_CORRECT_CPS)}")
         else:
             self.estimate.clear()
 
@@ -220,6 +273,36 @@ class AiPanel(QWidget):
         self.job.start()
         self._update_enabled()
 
+    def _summarize_cloud(self) -> None:
+        provider = self.settings.cloud_provider
+        if not self._cloud_confirmed:
+            answer = QMessageBox.question(
+                self, "Cloud-KI",
+                f"Das Transkript wird zur Auswertung an {cloud.PROVIDERS[provider]} gesendet. "
+                "Sind alle Teilnehmenden damit einverstanden?")
+            if answer != QMessageBox.Yes:
+                return
+            self._cloud_confirmed = True
+        session, model = self.session, self.settings.cloud_model
+        transcript = transcript_block(session, self._segments())
+        prompt = effective_prompt(self.settings.summary_prompt)
+        self._buffer = ""
+        self.output.clear()
+
+        def run(job):
+            job.status.emit(f"{cloud.PROVIDERS[provider]} schreibt die Zusammenfassung", 0, 0)
+            return cloud.summarize(provider, model, prompt, transcript,
+                                   on_token=job.token.emit, should_cancel=lambda: job.cancelled)
+
+        def done(text):
+            session.summary_path.write_text(text, "utf-8")
+            self.output.setMarkdown(text)
+            used = model or cloud.default_model(provider) or "neuestes Modell"
+            self.status.setText(f"Zusammenfassung gespeichert · {cloud.PROVIDERS[provider]} · {used}")
+
+        self._render_timer.start()
+        self._start(run, done)
+
     def _summarize(self) -> None:
         session, model = self.session, self.model_box.currentData()
         segments = self._segments()
@@ -230,7 +313,7 @@ class AiPanel(QWidget):
         def run(job):
             return tasks.summarize(self.client(), model, segments, session.title, session.language, num_ctx,
                                    on_token=job.token.emit, on_status=job.status.emit,
-                                   should_cancel=lambda: job.cancelled)
+                                   should_cancel=lambda: job.cancelled, session=session)
 
         def done(text):
             session.summary_path.write_text(text, "utf-8")

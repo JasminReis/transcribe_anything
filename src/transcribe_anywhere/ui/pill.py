@@ -74,6 +74,7 @@ class RecordingPill(QWidget):
         self.controller = controller
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._drag: QPoint | None = None
+        self._second_track = "system"
 
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color: {STATE_COLORS['recording']}; font-size: 16px;")
@@ -124,6 +125,11 @@ class RecordingPill(QWidget):
         self.mic.update()
 
     def show_at_default_position(self) -> None:
+        # Meter labels follow the recording mode: "Mic / System" online, "Ich / Gast" in person.
+        session = self.controller.session
+        inperson = bool(session and session.mode == "inperson")
+        self._second_track = "mic2" if inperson else "system"
+        self.mic.label, self.system.label = ("Ich", "Gast") if inperson else ("Mic", "System")
         self.mute.setChecked(self.controller.mic_muted)   # every recording starts unmuted
         self._show_mute(self.controller.mic_muted)
         self.adjustSize()
@@ -141,7 +147,7 @@ class RecordingPill(QWidget):
         self.timer_label.setText(f"{secs // 3600:02d}:{secs % 3600 // 60:02d}:{secs % 60:02d}")
         levels = self.controller.levels()
         self.mic.set_value(rms_to_level(levels.get("mic", 0.0)))
-        self.system.set_value(rms_to_level(levels.get("system", 0.0)))
+        self.system.set_value(rms_to_level(levels.get(self._second_track, 0.0)))
         live = self.controller.live_status()
         self.live.setVisible(live is not None)
         if live:
